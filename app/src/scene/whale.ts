@@ -49,6 +49,10 @@ export interface WhaleState {
   ascend: number;
   /** Where along its own track it presently is, world units. */
   cruise: number;
+  /** 0 while headed one way, 1 the other. Eased through the turn, never snapped. */
+  turn: number;
+  /** Which end of the track it is presently making for. */
+  turnTarget: 0 | 1;
 }
 
 export interface Whales {
@@ -80,6 +84,7 @@ uniform vec4 uLight;      // xyz world position, w strength
 uniform float uBoundary;
 uniform vec4 uBody;       // y, z, mass, flash
 uniform vec4 uMotion;     // cruise x, gape, warm, ascend
+uniform vec2 uTurn;       // x: yaw added by the turn, 0..PI. y: the bank it rolls into
 
 varying vec3 vWorld;
 
@@ -370,9 +375,9 @@ void main() {
     float wave = R * (0.035 + gape * 0.55 + uBody.w * 0.20);
 
     vec3 c = vec3(uMotion.x, uBody.x, uBody.y);
-    mat3 att = attitude(YAW_CONST + 0.10 * sin(uTime / 67.0),
+    mat3 att = attitude(YAW_CONST + uTurn.x + 0.10 * sin(uTime / 67.0),
                         -0.075 * sin(uTime / 53.0) - 0.04 + uMotion.w * 0.28,
-                         0.14 * sin(uTime / 37.0) + 0.06);
+                         0.14 * sin(uTime / 37.0) + 0.06 + uTurn.y);
 
     float t; vec3 n; vec3 lp; float coverage;
     vec3 tint = mix(vec3(0.34, 0.80, 1.0), vec3(1.0, 0.47, 0.26), uMotion.z);
@@ -430,6 +435,7 @@ export function createWhales(): Whales {
       uBoundary: { value: 0 },
       uBody: { value: new THREE.Vector4(0, -90, 0, 0) },
       uMotion: { value: new THREE.Vector4(0, 0, 0, 0) },
+      uTurn: { value: new THREE.Vector2(0, 0) },
     },
     depthTest: false,
     depthWrite: false,
@@ -450,7 +456,20 @@ export function createWhales(): Whales {
     gape: 0,
     ascend: 0,
     cruise: 0,
+    turn: 0,
+    turnTarget: 1,
   };
+
+  /** How far through its turn it is, eased: 0 headed one way, 1 the other. */
+  function turnEase(): number {
+    const t = state.turn;
+    return t * t * (3 - 2 * t);
+  }
+
+  /** +1 or -1 along the track, and zero at the top of the turn. */
+  function heading(): number {
+    return Math.cos(Math.PI * turnEase());
+  }
 
   const mouth = new THREE.Vector3();
   let depth = -90;
@@ -480,7 +499,7 @@ export function createWhales(): Whales {
       state.lunge = 1;
       const L = 15 + state.mass * 15;
       // The mouth is at the front of the animal, along its own heading.
-      mouth.set(state.cruise + Math.cos(YAW) * L * 0.95, state.y - 1.5, 0);
+      mouth.set(state.cruise + Math.cos(YAW) * L * 0.95 * heading(), state.y - 1.5, 0);
       return mouth;
     },
 
@@ -498,8 +517,6 @@ export function createWhales(): Whales {
        * enough to cross the frame in about a minute; a lunge multiplies it for
        * a couple of seconds, which is what makes the lunge look like effort.
        */
-      const speed = 0.85 + state.mass * 0.4 + state.lunge * 8.0;
-      state.cruise += speed * dt;
       /*
        * Twenty units either side, not forty-six.
        *
@@ -509,11 +526,31 @@ export function createWhales(): Whales {
        * corner. It should be *leaving* and *returning*, which needs a track a
        * little wider than the frame and no more.
        *
-       * It reverses rather than wrapping, because an animal that reappears at
-       * the opposite edge is a second animal, and there is only one.
+       * It *turns* at each end rather than wrapping. Subtracting the track
+       * length was a wrap in everything but name: the body vanished at the
+       * right edge and reappeared at the left one frame later, which reads as a
+       * second animal, and there is only one. So the far end of the track sets
+       * a new heading and the body swings through half a circle to meet it,
+       * banking into the turn the way a body with mass has to. Forward speed is
+       * the cosine of that swing, so it eases to nothing broadside-on and comes
+       * back up the other way: the pause at the end of the track is the turn
+       * itself, not a wait.
        */
       const range = 21;
-      if (state.cruise > range) state.cruise -= 2 * range;
+      if (state.cruise > range) state.turnTarget = 1;
+      else if (state.cruise < -range) state.turnTarget = 0;
+
+      const before = turnEase();
+      const rate = dt / 9;
+      state.turn = state.turnTarget === 1
+        ? Math.min(1, state.turn + rate)
+        : Math.max(0, state.turn - rate);
+      // Bank into it, proportional to how fast the heading is presently swinging.
+      const swing = dt > 0 ? (turnEase() - before) / dt : 0;
+      const bank = swing * 2.6;
+
+      const speed = 0.85 + state.mass * 0.4 + state.lunge * 8.0;
+      state.cruise += speed * heading() * dt;
 
       state.lunge = Math.max(0, state.lunge - dt / 2.4);
       // The gape lags the decision and closes more slowly than it opens, which
@@ -539,6 +576,7 @@ export function createWhales(): Whales {
       depth = -64 - state.distance * 34 + state.mass * 12 + state.ascend * 20;
       u.uBody.value.set(state.y + state.ascend * 9, depth, state.mass, state.flash);
       u.uMotion.value.set(state.cruise, state.gape, state.warm, state.ascend);
+      u.uTurn.value.set(Math.PI * turnEase(), bank);
     },
 
     setLight(x, y, z, strength) {
