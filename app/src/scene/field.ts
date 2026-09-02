@@ -227,7 +227,12 @@ void main() {
   // water is barely there; the same krill in a wake is the brightest thing in
   // the frame.
   float shear = 1.0 - exp(-vSpeed * 0.42);
-  float lum = 0.030 + shear * 0.95;
+  // Raised from 0.030 / 0.95: the first pass was too austere to sit and watch —
+  // correct about the blacks and wrong about the light. The resting term is
+  // what the still water is worth and the shear term is what a wake is worth,
+  // and it is the *ratio* between them that has to survive: eighty to one, so
+  // that a disturbance is still an event and not merely a brighter patch.
+  float lum = 0.042 + shear * 1.45;
 
   // The marine snow is not bioluminescent — it is dead matter, and it is only
   // ever seen because something else lit it. That makes it the one population
@@ -235,7 +240,7 @@ void main() {
   // light source (plan §6) be visible at all.
   float heavy = step(vSeed, 0.16);
   float lit = uLight.z * exp(-distance(vWorld.xy, uLight.xy) * 0.11);
-  lum = mix(lum, 0.028 + lit * 1.5, heavy);
+  lum = mix(lum, 0.034 + lit * 2.1, heavy);
   tint = mix(tint, mix(tint, vec3(0.86, 0.94, 1.0), 0.7), heavy);
 
   gl_FragColor = vec4(tint * lum * uExposure * core * vFade, 1.0);

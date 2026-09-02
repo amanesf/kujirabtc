@@ -33,6 +33,9 @@ html, body {
   /* The picture is the whole surface; nothing here should ever rubber-band or
    * offer to select text. */
   overscroll-behavior: none;
+  /* The whole surface is a control now (main.ts): without this, a drag across
+   * the water is a browser pan gesture and the water never hears about it. */
+  touch-action: none;
   -webkit-user-select: none;
   user-select: none;
   -webkit-tap-highlight-color: transparent;
@@ -313,10 +316,40 @@ body.ready .hud { opacity: 1; }
 }
 .stats {
   display: flex;
+  align-items: center;
   gap: 16px;
   font-size: 10px;
   color: var(--dim);
 }
+
+/* The legend's own control, so the rest of the glass is free for the water.
+ * A caret, pointing at where the panel is or where it would appear. */
+.legend-toggle {
+  margin-left: auto;
+  width: 34px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid rgba(120, 170, 200, 0.16);
+  border-radius: 3px;
+  background: rgba(6, 12, 20, 0.55);
+  pointer-events: auto;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.legend-toggle:active { background: rgba(20, 40, 58, 0.7); }
+.caret {
+  width: 0;
+  height: 0;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-top: 5px solid var(--dim);
+  transition: transform 0.35s ease-out;
+}
+/* Points down while the panel is open (it collapses downward into the button),
+ * and up while it is closed (it will come back up). */
+.legend-toggle[aria-expanded="false"] .caret { transform: rotate(180deg); }
 .stats b {
   font-family: var(--mono);
   font-variant-numeric: tabular-nums;
@@ -371,7 +404,7 @@ body.ready .hud { opacity: 1; }
   position: absolute;
   left: calc(env(safe-area-inset-left) + 14px);
   right: calc(env(safe-area-inset-right) + 14px);
-  bottom: calc(env(safe-area-inset-bottom) + 108px);
+  bottom: calc(env(safe-area-inset-bottom) + 118px);
   padding: 11px 13px 10px;
   border: 1px solid rgba(120, 170, 200, 0.14);
   border-radius: 3px;

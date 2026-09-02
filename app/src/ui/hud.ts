@@ -95,6 +95,9 @@ export function createHud(root: HTMLElement): Hud {
         <div class="stats">
           <span class="stat"><b class="rate">0.0</b> 約定/秒</span>
           <span class="stat"><b class="spread">—</b> スプレッド</span>
+          <button class="legend-toggle" type="button" aria-expanded="true" aria-label="凡例">
+            <span class="caret" aria-hidden="true"></span>
+          </button>
         </div>
         <ul class="tape"></ul>
       </footer>
@@ -107,7 +110,7 @@ export function createHud(root: HTMLElement): Hud {
           <li><i class="sw sw-whale"></i>クジラ<em>&gt; <b class="w-line">2.0</b> BTC</em><span>深部の巨体。指値の厚みそのもの</span></li>
         </ul>
         <p class="legend-axis">縦軸は<b>価格</b>。買いが強ければ海が沈む。</p>
-        <p class="legend-hint">画面をタップで再表示</p>
+        <p class="legend-hint">水に触れると散る</p>
       </div>
     </div>
   `;
@@ -139,17 +142,25 @@ export function createHud(root: HTMLElement): Hud {
 
   /*
    * The legend is not optional furniture. A mapping only the author knows is
-   * not legibility, and the whole point of §2 is that a viewer should be able
-   * to *learn* to read the water. It is shown for twenty seconds, which is
-   * about how long it takes to read, and then it gets out of the way — and a
-   * tap anywhere brings it back, because on a phone there is no hover.
+   * not legibility, and the point is that a viewer should be able to *learn* to
+   * read the water. It shows for twenty seconds — about how long it takes to
+   * read — and then gets out of the way.
+   *
+   * It used to be dismissed by tapping anywhere, which was the wrong thing to
+   * spend the gesture on: the whole surface of a piece about water should
+   * answer to a finger, and a caret is a fifth of a second of anyone's day. So
+   * the panel has its own control and the screen is left free for the water
+   * (main.ts).
    */
-  let legendTimer = window.setTimeout(() => legend.setAttribute('data-open', '0'), 20000);
-  document.addEventListener('pointerdown', () => {
+  const toggle = q<HTMLButtonElement>('.legend-toggle');
+  function setLegend(open: boolean): void {
+    legend.setAttribute('data-open', open ? '1' : '0');
+    toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+  }
+  const legendTimer = window.setTimeout(() => setLegend(false), 20000);
+  toggle.addEventListener('click', () => {
     window.clearTimeout(legendTimer);
-    const open = legend.getAttribute('data-open') === '1';
-    legend.setAttribute('data-open', open ? '0' : '1');
-    if (!open) legendTimer = window.setTimeout(() => legend.setAttribute('data-open', '0'), 20000);
+    setLegend(legend.getAttribute('data-open') !== '1');
   });
 
   const feedText: Record<FeedState, string> = {

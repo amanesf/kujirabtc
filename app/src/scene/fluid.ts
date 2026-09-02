@@ -50,6 +50,8 @@ export interface Impulse {
   radius: number;
   /** Signed swirl. Nonzero only for whales. */
   spin: number;
+  /** Signed radial: positive blows outward, negative draws in. */
+  radial: number;
   strength: number;
   /** Seconds remaining, and seconds it started with. */
   life: number;
@@ -74,7 +76,7 @@ uniform float uAmbient;
 uniform vec2 uMin;
 uniform vec2 uSize;
 uniform vec4 uImpulse[${MAX_IMPULSES}];  // xy world position, z strength, w radius
-uniform vec4 uImpulseDir[${MAX_IMPULSES}]; // xy direction, z spin, w unused
+uniform vec4 uImpulseDir[${MAX_IMPULSES}]; // xy direction, z spin, w radial
 
 /*
  * Simplex-ish value noise. Cheap on purpose: it is only used to keep the field
@@ -172,7 +174,12 @@ void main() {
     vec4 dir = uImpulseDir[i];
     vec2 radial = d / r;
     vec2 tangent = vec2(-radial.y, radial.x);
-    v += (dir.xy + radial * dir.z * 0.0 + tangent * dir.z) * imp.z * fall * uDt;
+    // The radial term is signed, and the negative half of it is the whole
+    // reason it exists: a lunge-feeding whale does not blow the krill away, it
+    // *inhales* them. A suction is a thing you can watch happen to a hundred
+    // thousand bodies at once, and there is nothing else in the piece that
+    // moves the field inward.
+    v += (dir.xy + radial * dir.w + tangent * dir.z) * imp.z * fall * uDt;
     dye += fall * imp.z * uDt * 0.25;
   }
 
@@ -286,7 +293,7 @@ export function createFluid(renderer: THREE.WebGLRenderer): Fluid {
          */
         const k = Math.max(0, imp.life / imp.span);
         slots[i].set(imp.x, imp.y, imp.strength * k * k, imp.radius);
-        dirs[i].set(imp.dx, imp.dy, imp.spin * k, 0);
+        dirs[i].set(imp.dx, imp.dy, imp.spin * k, imp.radial * k);
       }
 
       gpu.compute();

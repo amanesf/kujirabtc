@@ -98,16 +98,25 @@ export function createObserver(): Observer {
        * It also pulses — 0.6 to 1.0 over about eleven seconds — because a
        * steady light is a lamp and an unsteady one is alive.
        *
-       * It lives *down there*, near the animals, and that is not a detail. Held
-       * up at the viewer's own depth its falloff reached the whale as a uniform
-       * dimness and lit the entire body evenly, which is the flat, slab-like
-       * look the first capture had. Put among them, the same falloff makes a
-       * patch a few metres across on a body hundreds long — which is the whole
-       * mechanism of the piece (plan §2).
+       * What is stored here is an *offset*, not a position: main.ts adds the
+       * animal's own coordinates to it. That is a correction from watching the
+       * piece. Left to wander the world on its own the lamp spent most of its
+       * time nowhere near a body forty units off along its own track, so the
+       * reveal — which is the entire mechanism of the whale (plan §2) — almost
+       * never happened. Anchored to the animal, the lamp is exploring *it*:
+       * across the flank, over the head, down to the flukes, on periods that
+       * never line up, so the patch is somewhere new every time.
+       *
+       * The offsets are deliberately larger than the animal is thick and
+       * smaller than it is long, so it is always some of the body and never all
+       * of it.
        */
-      light.x = Math.sin(time / 31.4) * 11.0 + Math.sin(time / 7.7) * 2.6;
-      light.y = Math.cos(time / 43.1) * 12.0 + Math.cos(time / 11.3) * 3.0;
-      light.z = -86.0 + Math.sin(time / 26.7) * 14.0;
+      light.x = Math.sin(time / 31.4) * 14.0 + Math.sin(time / 7.7) * 3.4;
+      light.y = Math.cos(time / 43.1) * 7.0 + Math.cos(time / 11.3) * 2.2;
+      // Held well in front of the body rather than against it: pressed close,
+      // the falloff stopped discriminating and the lit part came out a flat
+      // white blob instead of a patch of skin with a shape to it.
+      light.z = 23.0 + Math.sin(time / 26.7) * 7.0;
       light.w = 0.60 + 0.40 * (0.5 + 0.5 * Math.sin(time / 11.0));
     },
   };

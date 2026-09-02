@@ -73,9 +73,9 @@ export function createPostFx(
    */
   const bloom = new UnrealBloomPass(
     new THREE.Vector2(width, height),
-    0.62, // strength
-    0.80, // radius
-    0.55, // threshold, in linear light before the tonemap
+    0.74, // strength
+    0.82, // radius
+    0.48, // threshold, in linear light before the tonemap
   );
   composer.addPass(bloom);
   composer.addPass(new OutputPass());

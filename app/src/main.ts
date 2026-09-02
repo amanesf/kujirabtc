@@ -7,7 +7,7 @@ import { createObserver } from './core/observer';
 import { createFluid } from './scene/fluid';
 import { createField } from './scene/field';
 import { createWhales } from './scene/whale';
-import { createStreaks } from './scene/streaks';
+import { createShoal } from './scene/shoal';
 import { createFeed, type FeedState } from './market/feed';
 import { createOcean } from './market/ocean';
 import { createHud } from './ui/hud';
@@ -34,12 +34,12 @@ const frame = createFrame();
 const fluid = createFluid(stage.renderer);
 const field = createField(stage.renderer, fieldResolution(), fluid);
 const whales = createWhales();
-const streaks = createStreaks();
+const shoal = createShoal();
 const observer = createObserver();
 
 scene.add(whales.mesh);
 scene.add(field.points);
-scene.add(streaks.mesh);
+scene.add(shoal.mesh);
 
 const postFx = createPostFx(stage.renderer, scene, stage.camera, stage.size.x, stage.size.y);
 const ocean = createOcean();
@@ -71,6 +71,73 @@ window.addEventListener('resize', layout);
 // orientationchange rather than resize on some versions.
 window.addEventListener('orientationchange', () => window.setTimeout(layout, 250));
 
+/*
+ * The touch.
+ *
+ * A finger on the glass does not select anything, open anything or navigate
+ * anywhere — it disturbs the water. The krill are not pushed directly; the
+ * *fluid* is (scene/fluid.ts), and they follow it, which is why the response
+ * has weight to it: the water bulges away, curls at the edges of the bulge, and
+ * is still settling several seconds after the finger has gone. Pushing the
+ * particles would have given an instant, weightless, and much worse answer.
+ *
+ * It is deliberately gentle — a startle, not a blast. The first attempt used a
+ * radial of 20 over a 1.6 second life and, dragged, stacked ten of those into a
+ * pool of eight: the crop taken afterwards was *empty*, a clean hole swept
+ * through the field. What was asked for was that they avoid the finger a
+ * little, and "a little" turned out to be about a third of the strength and
+ * half the duration. The one thing this must not do is compete with a whale.
+ */
+const touchWorld = new THREE.Vector3();
+const touchDir = new THREE.Vector3();
+let lastTouch = 0;
+
+function disturb(clientX: number, clientY: number, strength: number): void {
+  // Screen to the z = 0 plane, which is where the field is densest.
+  touchWorld.set(
+    (clientX / window.innerWidth) * 2 - 1,
+    -((clientY / window.innerHeight) * 2 - 1),
+    0.5,
+  ).unproject(stage.camera);
+  touchDir.copy(touchWorld).sub(stage.camera.position).normalize();
+  if (Math.abs(touchDir.z) < 1e-4) return;
+  const t = -stage.camera.position.z / touchDir.z;
+  if (t <= 0) return;
+  const x = stage.camera.position.x + touchDir.x * t;
+  const y = stage.camera.position.y + touchDir.y * t;
+
+  fluid.add({
+    x, y,
+    dx: 0,
+    dy: 0,
+    radius: 3.0,
+    // A little swirl with it. A purely radial push makes a clean expanding
+    // disc, which reads as a shockwave; the swirl makes it read as a hand.
+    spin: 2.5,
+    radial: 6.0 * strength,
+    strength: 1,
+    life: 1.0,
+    span: 1.0,
+  });
+  shoal.scatter(x, y, 3.0, 2.2 * strength);
+}
+
+function onPointer(event: PointerEvent, strength: number): void {
+  // The HUD's own controls keep their taps; everything else is water.
+  if ((event.target as HTMLElement | null)?.closest('button')) return;
+  const now = performance.now();
+  // Dragging paints a continuous disturbance, but at pointer-move rates that
+  // would be sixty impulses a second into a pool of eight.
+  if (now - lastTouch < 100) return;
+  lastTouch = now;
+  disturb(event.clientX, event.clientY, strength);
+}
+
+window.addEventListener('pointerdown', (e) => onPointer(e, 1));
+window.addEventListener('pointermove', (e) => {
+  if (e.pressure > 0 || e.buttons > 0) onPointer(e, 0.45);
+});
+
 const ndc = new THREE.Vector3();
 /** World Y -> fraction down the screen, for the HUD's price axis. */
 function project(worldY: number): number {
@@ -94,37 +161,50 @@ function applyImpulses(): void {
     const y = frame.toY(imp.price);
     const x = imp.x * frame.halfWidth;
     if (imp.whale) {
-      streaks.spawn(x, y, imp.side, imp.power);
+      /*
+       * A whale print is a lunge, and the fluid gets a *negative* radial for it.
+       *
+       * This is the one place the piece departs from "big trade, big explosion",
+       * and it is the better picture in both directions. Biologically a
+       * rorqual's lunge is an inhalation: the krill are drawn into the pouch,
+       * not blown clear. Financially a large aggressive order is a thing that
+       * *consumes* the book rather than one that pushes it away. Both say
+       * inward, so the water goes inward — and a hundred thousand bodies
+       * spiralling into a mouth is a sight the outward version cannot buy.
+       *
+       * The spin is kept, so what is drawn in is drawn in turning.
+       */
+      const at = whales.lungeAt();
+      shoal.spawn(x, y, imp.side, imp.power);
       fluid.add({
-        x, y,
-        dx: imp.side * 26 * imp.power,
-        dy: 5 * imp.power,
-        radius: 2.6 + imp.power * 4.5,
-        // Buyers wind the water one way and sellers the other, so consecutive
-        // prints on the same side compound into one large rotation instead of
-        // cancelling — which is why a sweep looks like a sweep.
-        spin: imp.side * 34 * imp.power,
+        x: at.x, y: at.y,
+        dx: Math.cos(0.58) * 9 * imp.power,
+        dy: 0,
+        radius: 5.0 + imp.power * 7.0,
+        spin: imp.side * 22 * imp.power,
+        radial: -34 * imp.power,
         strength: 1,
-        life: 6.5,
-        span: 6.5,
+        life: 7.0,
+        span: 7.0,
       });
       postFx.shocks.push({ x: 0, y: 0, age: 0, power: (0.5 + imp.power) * (imp.leviathan ? 1.7 : 1) });
       const shock = postFx.shocks[postFx.shocks.length - 1];
-      ndc.set(x, y, -6).project(stage.camera);
+      ndc.set(at.x, at.y, -6).project(stage.camera);
       shock.x = ndc.x * 0.5 * stage.aspect();
       shock.y = ndc.y * 0.5;
-      observer.push(x, y, imp.power * (imp.leviathan ? 3.2 : 1.4));
-      // A lift eats the offer, so it is the *ask* side that flinches.
-      const hit = imp.side > 0 ? whales.ask : whales.bid;
-      hit.flash = Math.min(1.6, hit.flash + 0.6 + imp.power);
+      observer.push(at.x, at.y, imp.power * (imp.leviathan ? 3.2 : 1.4));
+      whales.state.flash = Math.min(1.6, whales.state.flash + 0.6 + imp.power);
+      // The rare tier is the one that brings it up out of the dark (plan §3).
+      if (imp.leviathan) whales.state.ascend = 1;
     } else {
-      streaks.spawn(x, y, imp.side, imp.power);
+      shoal.spawn(x, y, imp.side, imp.power);
       fluid.add({
         x, y,
         dx: imp.side * 15 * imp.power,
         dy: (Math.random() - 0.5) * 4,
         radius: 1.5 + imp.power * 2.0,
         spin: imp.side * 4 * imp.power,
+        radial: 2 * imp.power,
         strength: 1,
         life: 2.4,
         span: 2.4,
@@ -148,8 +228,6 @@ function step(dt: number): void {
   applyImpulses();
 
   observer.update(dt, simTime, stage.camera);
-  field.setLight(observer.light.x, observer.light.y, observer.light.w);
-  whales.setLight(observer.light.x, observer.light.y, observer.light.z, observer.light.w);
 
   /*
    * The warm/cold boundary (plan §8).
@@ -164,23 +242,45 @@ function step(dt: number): void {
   field.setBoundary(boundary);
   whales.setBoundary(boundary);
 
-  // The bodies sit at their own limit prices. With no book yet they rest at the
-  // edges of the frame, which is also where a market with no walls puts them.
-  whales.bid.y = state.bidWhale.price > 0 ? frame.toY(state.bidWhale.price) : -halfHeight * 0.7;
-  whales.ask.y = state.askWhale.price > 0 ? frame.toY(state.askWhale.price) : halfHeight * 0.7;
-  whales.bid.mass = state.bidWhale.mass;
-  whales.ask.mass = state.askWhale.mass;
-  whales.bid.distance = state.bidWhale.distance;
-  whales.ask.distance = state.askWhale.distance;
-  // The flash is the fast end of the event: 150ms of it and then it is gone,
-  // while the vortex it announced is still turning six seconds later.
-  whales.bid.flash *= Math.exp(-dt / 0.15);
-  whales.ask.flash *= Math.exp(-dt / 0.15);
-  whales.update(simTime, stage.camera);
+  /*
+   * The animal belongs to whichever side of the book is heavier — and it
+   * *swims* to the new level when that changes rather than jumping to it.
+   *
+   * There were two of them and they stacked into one unreadable mass. One is
+   * both the better composition and the better reading: a single body whose
+   * colour says which side it is and whose height says at what price. Ten
+   * seconds of travel turns what would be a discontinuity in the data into the
+   * most legible motion in the piece — you see dominance change hands.
+   */
+  const dominant = state.askWhale.mass > state.bidWhale.mass ? state.askWhale : state.bidWhale;
+  const wantWarm = dominant === state.askWhale ? 1 : 0;
+  const wantY = dominant.price > 0
+    ? frame.toY(dominant.price)
+    : (wantWarm ? halfHeight * 0.7 : -halfHeight * 0.7);
+  const ws = whales.state;
+  ws.y += (wantY - ws.y) * (1 - Math.exp(-dt / 3.5));
+  ws.warm += (wantWarm - ws.warm) * (1 - Math.exp(-dt / 6));
+  ws.mass += (dominant.mass - ws.mass) * (1 - Math.exp(-dt / 2));
+  ws.distance += (dominant.distance - ws.distance) * (1 - Math.exp(-dt / 4));
+  whales.update(dt, simTime, stage.camera);
+
+  /*
+   * The lamp rides with the animal (core/observer.ts holds only the offset).
+   *
+   * The marine snow in the field is lit by the same source, so the glints that
+   * appear in the water are always in the neighbourhood of the body — which
+   * means the light in the frame and the thing worth looking at are never in
+   * different places. It is one source doing two jobs and it is why the picture
+   * has somewhere for the eye to go.
+   */
+  const lx = ws.cruise * 0.55 + observer.light.x;
+  const ly = ws.y + observer.light.y;
+  field.setLight(lx, ly, observer.light.w);
+  whales.setLight(lx, ly, whales.depth() + observer.light.z, observer.light.w);
 
   fluid.update(dt, simTime, state.agitation);
   field.update(dt, simTime);
-  streaks.update(dt);
+  shoal.update(dt, simTime);
 
   /*
    * The lenses, at the animals' own screen positions.
@@ -190,24 +290,24 @@ function step(dt: number): void {
    * knot — which is the right way round: a diffuse mass has a diffuse field.
    */
   postFx.lenses.length = 0;
-  for (const w of [whales.bid, whales.ask]) {
-    if (w.mass < 0.03) continue;
-    ndc.set(0, w.y, -74 - w.distance * 52).project(stage.camera);
+  if (ws.mass >= 0.03) {
+    ndc.set(ws.cruise * 0.4, ws.y, whales.depth()).project(stage.camera);
     postFx.lenses.push({
       x: ndc.x * 0.5 * stage.aspect(),
       y: ndc.y * 0.5,
       /*
        * 0.008, not 0.055.
        *
-       * The softened 1/r term peaks near 1/core, so at a core radius of about
-       * a fifth of the screen the multiplier on this number is roughly five —
+       * The softened 1/r term peaks near 1/core, so at a core radius of about a
+       * fifth of the screen the multiplier on this number is roughly five —
        * which made the first version displace the picture by eight per cent of
        * its width and turned the frame into a fisheye. A lens you notice as a
        * lens has already failed; what it should do is make the field behind a
-       * body *swim* slightly, and nothing more.
+       * body *swim* slightly, and nothing more. The gape term adds to it during
+       * a lunge, so the water visibly bends toward the mouth.
        */
-      strength: w.mass * 0.008 + w.flash * 0.006,
-      radius: 0.26 + w.mass * 0.34,
+      strength: ws.mass * 0.008 + ws.flash * 0.006 + ws.gape * 0.010,
+      radius: 0.26 + ws.mass * 0.34,
     });
   }
   for (let i = postFx.shocks.length - 1; i >= 0; i--) {
@@ -257,8 +357,8 @@ function frameLoop(now: number): void {
 
   postFx.render();
   hud.update(ocean.state, ocean.log, feedState, project, (y) => frame.toPrice(y), {
-    bidY: whales.bid.y,
-    askY: whales.ask.y,
+    bidY: frame.toY(ocean.state.bidWhale.price),
+    askY: frame.toY(ocean.state.askWhale.price),
   });
 }
 requestAnimationFrame(frameLoop);
