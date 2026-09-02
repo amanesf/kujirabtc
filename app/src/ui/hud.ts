@@ -56,7 +56,7 @@ export function createHud(root: HTMLElement, onProvoke: () => void): Hud {
     <div class="hud">
       <div class="frame-inset" aria-hidden="true"></div>
 
-      <h1 class="title">深海の静かなるクジラ</h1>
+      <h1 class="title">静かなる深海のクジラ</h1>
 
       <header class="hud-top">
         <div class="pair">

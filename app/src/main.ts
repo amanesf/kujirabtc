@@ -14,7 +14,7 @@ import { createOcean } from './market/ocean';
 import { createHud } from './ui/hud';
 
 /**
- * 深海の静かなるクジラ — a live BTC/USDT tape, as an ocean.
+ * 静かなる深海のクジラ — a live BTC/USDT tape, as an ocean.
  *
  * The whole piece in one paragraph: the vertical axis is price; standing limit
  * orders are bodies in the deep whose mass makes them nearer and darker rather
