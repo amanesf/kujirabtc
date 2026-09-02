@@ -49,6 +49,8 @@ export interface WhaleState {
   ascend: number;
   /** Where along its own track it presently is, world units. */
   cruise: number;
+  /** The tail beat, in radians. Integrated, so the rate can change under it. */
+  stroke: number;
   /** 0 while headed one way, 1 the other. Eased through the turn, never snapped. */
   turn: number;
   /** Which end of the track it is presently making for. */
@@ -84,7 +86,7 @@ uniform vec4 uLight;      // xyz world position, w strength
 uniform float uBoundary;
 uniform vec4 uBody;       // y, z, mass, flash
 uniform vec4 uMotion;     // cruise x, gape, warm, ascend
-uniform vec2 uTurn;       // x: yaw added by the turn, 0..PI. y: the bank it rolls into
+uniform vec4 uSwim;       // yaw added by the turn, bank roll, stroke phase, effort 0..1
 
 varying vec3 vWorld;
 
@@ -132,10 +134,20 @@ float girth(float t) {
  * makes fins hundreds of units long and facets the flanks.
  */
 float sdWhale(vec3 p, float R, float L, float wave, float gape) {
-  // The stroke: a travelling wave, largest at the flukes and zero at the head,
-  // because that is how a whale is driven. Tiny at rest, deep in a lunge.
+  /*
+   * The stroke: a travelling wave, largest at the flukes and zero at the head,
+   * because that is how a whale is driven.
+   *
+   * The phase arrives from the CPU rather than being read off uTime here. It
+   * has to: the beat rate follows how hard the animal is working, and a rate
+   * that multiplies the clock — sin(k*x - w*uTime) — jumps the phase the
+   * instant w changes — the tail teleports mid-beat every time the animal
+   * accelerates. Integrating the rate instead keeps the beat continuous
+   * through any change of speed, which is the whole point of tying it to
+   * speed at all.
+   */
   float amp = wave * smoothstep(0.5 * L, -L, p.x);
-  p.y -= sin(p.x * (1.7 / L) * PI - uTime * 0.55) * amp;
+  p.y -= sin(p.x * (1.7 / L) * PI - uSwim.z) * amp;
 
   float t = p.x / L * 0.5 + 0.5;
   float r = girth(t) * R;
@@ -370,14 +382,26 @@ void main() {
     // threshold of being noticed and above the threshold of being felt, which
     // is the whole specification for it.
     R *= 1.0 + 0.02 * sin(uTime * 2.0 * PI / 40.0);
-    // The stroke deepens enormously in a lunge — this is an animal that has
-    // just decided to move.
-    float wave = R * (0.035 + gape * 0.55 + uBody.w * 0.20);
+    /*
+     * How deep the tail swings.
+     *
+     * This was 0.035 of the girth at cruise, which on a body of this size is
+     * a couple of centimetres of fluke travel — below the threshold of being
+     * seen at all. The animal was therefore *stationary except when feeding*,
+     * and a body that holds still while its position changes does not read as
+     * an animal; it reads as a model being slid across the frame. A fin whale
+     * carries a fluke excursion of something like a tenth of its own length
+     * peak to peak, which for these proportions is around a third of the
+     * girth in each direction. The base is set below that and the rest is
+     * bought with effort, because the reserve has to be visible: a cruising
+     * animal that is already thrashing has nowhere to go when it lunges.
+     */
+    float wave = R * (0.17 + uSwim.w * 0.15 + gape * 0.55 + uBody.w * 0.20);
 
     vec3 c = vec3(uMotion.x, uBody.x, uBody.y);
-    mat3 att = attitude(YAW_CONST + uTurn.x + 0.10 * sin(uTime / 67.0),
+    mat3 att = attitude(YAW_CONST + uSwim.x + 0.10 * sin(uTime / 67.0),
                         -0.075 * sin(uTime / 53.0) - 0.04 + uMotion.w * 0.28,
-                         0.14 * sin(uTime / 37.0) + 0.06 + uTurn.y);
+                         0.14 * sin(uTime / 37.0) + 0.06 + uSwim.y);
 
     float t; vec3 n; vec3 lp; float coverage;
     vec3 tint = mix(vec3(0.34, 0.80, 1.0), vec3(1.0, 0.47, 0.26), uMotion.z);
@@ -435,7 +459,7 @@ export function createWhales(): Whales {
       uBoundary: { value: 0 },
       uBody: { value: new THREE.Vector4(0, -90, 0, 0) },
       uMotion: { value: new THREE.Vector4(0, 0, 0, 0) },
-      uTurn: { value: new THREE.Vector2(0, 0) },
+      uSwim: { value: new THREE.Vector4(0, 0, 0, 0) },
     },
     depthTest: false,
     depthWrite: false,
@@ -456,6 +480,7 @@ export function createWhales(): Whales {
     gape: 0,
     ascend: 0,
     cruise: 0,
+    stroke: 0,
     turn: 0,
     turnTarget: 1,
   };
@@ -552,6 +577,21 @@ export function createWhales(): Whales {
       const speed = 0.85 + state.mass * 0.4 + state.lunge * 8.0;
       state.cruise += speed * heading() * dt;
 
+      /*
+       * The beat, and the fact that it costs something.
+       *
+       * Rate and depth both follow effort, which is the part that reads as
+       * life: an animal that is working beats faster *and* deeper, and one
+       * that is coasting does neither. A fin whale cruises at roughly a fifth
+       * of a hertz and drives at about three times that, so those are the ends
+       * of the range. Effort is thrust, not ground speed — the body is still
+       * stroking at the top of a turn, where its forward progress is zero, and
+       * a tail that stopped there would look like the animal had been paused.
+       */
+      const effort = Math.min(1, (speed - 0.85) / 1.6);
+      const hz = 0.20 + effort * 0.40;
+      state.stroke = (state.stroke + hz * 2 * Math.PI * dt) % (2 * Math.PI);
+
       state.lunge = Math.max(0, state.lunge - dt / 2.4);
       // The gape lags the decision and closes more slowly than it opens, which
       // is what makes the pouch look heavy with water rather than elastic.
@@ -576,7 +616,7 @@ export function createWhales(): Whales {
       depth = -64 - state.distance * 34 + state.mass * 12 + state.ascend * 20;
       u.uBody.value.set(state.y + state.ascend * 9, depth, state.mass, state.flash);
       u.uMotion.value.set(state.cruise, state.gape, state.warm, state.ascend);
-      u.uTurn.value.set(Math.PI * turnEase(), bank);
+      u.uSwim.value.set(Math.PI * turnEase(), bank, state.stroke, effort);
     },
 
     setLight(x, y, z, strength) {
