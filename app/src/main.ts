@@ -4,6 +4,7 @@ import { createStage, fieldResolution } from './core/renderer';
 import { createFrame, WORLD_HEIGHT } from './core/frame';
 import { createPostFx } from './core/postFx';
 import { createObserver } from './core/observer';
+import { toNdc, toWater } from './core/space';
 import { createFluid } from './scene/fluid';
 import { createField } from './scene/field';
 import { createWhales } from './scene/whale';
@@ -146,42 +147,98 @@ function project(worldY: number): number {
 }
 
 /**
- * A whale print, which is a lunge, and the fluid gets a *negative* radial.
+ * A whale print, which is a *request* for a lunge.
  *
- * This is the one place the piece departs from "big trade, big explosion", and
- * it is the better picture in both directions. Biologically a rorqual's lunge
- * is an inhalation: the krill are drawn into the pouch, not blown clear.
- * Financially a large aggressive order is a thing that *consumes* the book
- * rather than one that pushes it away. Both say inward, so the water goes
- * inward — and a hundred thousand bodies spiralling into a mouth is a sight
- * the outward version cannot buy.
- *
- * The spin is kept, so what is drawn in is drawn in turning.
+ * What used to be here fired everything on the frame the print landed — the
+ * suction, the ring, the shove — with the mouth wherever the animal happened
+ * to be standing, which was usually mid-track and sometimes off the side of
+ * the frame. The animal now runs its own sequence (scene/whale.ts) and calls
+ * back when the jaw actually opens, so the water is disturbed at the instant
+ * and in the place where something is being eaten. Everything that belongs to
+ * the *print* rather than to the animal — the school it displaces, the flash
+ * on the flank, the rare ascent — still happens now.
  */
+let pendingLeviathan = false;
+
 function lunge(x: number, y: number, side: number, power: number, leviathan: boolean): void {
-  const at = whales.lungeAt();
   shoal.spawn(x, y, side, power);
+  whales.state.flash = Math.min(1.6, whales.state.flash + 0.6 + power);
+  // The rare tier is the one that brings it up out of the dark (plan §3).
+  if (leviathan) whales.state.ascend = 1;
+  pendingLeviathan = pendingLeviathan || leviathan;
+  whales.beginLunge(Math.min(1, power * (leviathan ? 1.35 : 1)));
+}
+
+/** Scratch, all of it reused every frame rather than allocated per event. */
+const water = new THREE.Vector2();
+const screen = new THREE.Vector2();
+const mouthWhale = new THREE.Vector3();
+const bodyWater = new THREE.Vector2();
+
+/** How wide the mouth's influence is, in the water's own units. */
+function mouthRadius(power: number): number {
+  return frame.halfWidth * (0.42 + power * 0.30);
+}
+
+/*
+ * The moment the jaws open — and the one conversion this file used to be
+ * missing (core/space.ts).
+ *
+ * The mouth arrives in the animal's frame, seventy units back and up to
+ * forty-five units off the centre line. The fluid's domain is nine and a half
+ * units across. Handing one to the other, which is what this did, put every
+ * lunge's suction ten domain widths outside the water — where the forcing
+ * gaussian is exactly zero — so the drama of the event never touched a single
+ * krill. It is converted here, once, into the point in the water that appears
+ * at the same place on the glass, and everything downstream takes that.
+ *
+ * The radial is negative and that is the whole idea: a rorqual's lunge is an
+ * inhalation and a large aggressive order *consumes* the book rather than
+ * pushing it away. Both say inward, and a hundred thousand bodies spiralling
+ * into a mouth is a sight the outward version cannot buy. The spin is kept, so
+ * what is drawn in is drawn in turning.
+ */
+whales.setOnEngulf((mouth, power) => {
+  const leviathan = pendingLeviathan;
+  pendingLeviathan = false;
+  const depth = whales.depth();
+  toWater(mouth.x, mouth.y, depth, stage.camera, water);
+  toWater(whales.state.cruise, whales.state.y, depth, stage.camera, bodyWater);
+
+  // Along the animal's own heading, as the screen sees it: the pouch is being
+  // driven forward through the water even as the mouth pulls it in.
+  const hx = water.x - bodyWater.x;
+  const hy = water.y - bodyWater.y;
+  const h = Math.hypot(hx, hy) || 1;
+  const radius = mouthRadius(power);
+
   fluid.add({
-    x: at.x, y: at.y,
-    dx: Math.cos(0.58) * 9 * power,
-    dy: 0,
-    radius: 5.0 + power * 7.0,
-    spin: side * 22 * power,
-    radial: -34 * power,
+    x: water.x, y: water.y,
+    dx: (hx / h) * 5.0 * power,
+    dy: (hy / h) * 5.0 * power,
+    radius,
+    spin: (hx > 0 ? 1 : -1) * 9 * power,
+    radial: -16 * power,
     strength: 1,
     life: 7.0,
     span: 7.0,
   });
-  postFx.shocks.push({ x: 0, y: 0, age: 0, power: (0.5 + power) * (leviathan ? 1.7 : 1) });
-  const shock = postFx.shocks[postFx.shocks.length - 1];
-  ndc.set(at.x, at.y, -6).project(stage.camera);
-  shock.x = ndc.x * 0.5 * stage.aspect();
-  shock.y = ndc.y * 0.5;
-  observer.push(at.x, at.y, power * (leviathan ? 3.2 : 1.4));
-  whales.state.flash = Math.min(1.6, whales.state.flash + 0.6 + power);
-  // The rare tier is the one that brings it up out of the dark (plan §3).
-  if (leviathan) whales.state.ascend = 1;
-}
+
+  // The ring, projected at the body's *actual* depth. At z = -6 it came out
+  // at an NDC x of nearly eight — far off frame, where a front this wide sat
+  // along the border and coloured it (effects/abyss.ts).
+  toNdc(mouth.x, mouth.y, depth, stage.camera, screen);
+  postFx.shocks.push({
+    x: screen.x * 0.5 * stage.aspect(),
+    y: screen.y * 0.5,
+    age: 0,
+    power: (0.5 + power) * (leviathan ? 1.7 : 1),
+  });
+
+  observer.push(water.x, water.y, power * (leviathan ? 3.2 : 1.4));
+  // And the school that was in the wrong place at the wrong time.
+  shoal.consume(water.x, water.y, radius * 0.75);
+});
 
 /*
  * The button under the whale in the legend (ui/hud.ts).
@@ -239,6 +296,9 @@ function applyImpulses(): void {
   if (postFx.shocks.length > 8) postFx.shocks.splice(0, postFx.shocks.length - 8);
 }
 
+/** The slow whole-frame lever (see step()). Starts where a quiet market sits. */
+let exposure = 0.9;
+
 const STEP = 1 / 60;
 let simTime = 0;
 let carry = 0;
@@ -290,18 +350,71 @@ function step(dt: number): void {
   whales.update(dt, simTime, stage.camera);
 
   /*
-   * The lamp rides with the animal (core/observer.ts holds only the offset).
+   * The lamp rides with the animal (core/observer.ts holds only the offset) —
+   * and there is now exactly one of it.
    *
-   * The marine snow in the field is lit by the same source, so the glints that
-   * appear in the water are always in the neighbourhood of the body — which
-   * means the light in the frame and the thing worth looking at are never in
-   * different places. It is one source doing two jobs and it is why the picture
-   * has somewhere for the eye to go.
+   * There were two. The same number, `cruise * 0.55`, was handed to the water
+   * and to the whale, which live at depths where the frame is 9.5 and 31 units
+   * across respectively: one number cannot be the same place in both, so the
+   * light on the water and the light on the animal were simply two different
+   * lights that happened to pulse together. §5's claim that one source does two
+   * jobs was false in the implementation.
+   *
+   * The lamp has a position — in the animal's space, because that is the thing
+   * it is exploring — and the water is told where that position *appears*.
+   * Now the glints in the field really are around the body, and the picture has
+   * one place for the eye to go instead of two.
    */
-  const lx = ws.cruise * 0.55 + observer.light.x;
-  const ly = ws.y + observer.light.y;
-  field.setLight(lx, ly, observer.light.w);
-  whales.setLight(lx, ly, whales.depth() + observer.light.z, observer.light.w);
+  const depth = whales.depth();
+  const lampX = ws.cruise + observer.light.x;
+  const lampY = ws.y + observer.light.y;
+  const lampZ = depth + observer.light.z;
+  whales.setLight(lampX, lampY, lampZ, observer.light.w);
+  toWater(lampX, lampY, lampZ, stage.camera, water);
+  field.setLight(water.x, water.y, observer.light.w);
+
+  /*
+   * The mouth, in the water.
+   *
+   * Two things read it: the krill go dark inside it (they are behind a closing
+   * jaw, in the only unlit volume in the picture) and the fish are pulled out
+   * of the way of the body ahead of it. Before this the animal and the school
+   * swam through each other with no acquaintance at all, which is a strange
+   * thing to allow in an ocean whose entire subject is one eating the other.
+   */
+  whales.mouth(mouthWhale);
+  toWater(mouthWhale.x, mouthWhale.y, depth, stage.camera, water);
+  const gapeR = mouthRadius(0.8);
+  field.setMouth(water.x, water.y, gapeR * 0.8, ws.gape);
+  if (ws.gape > 0.35) shoal.consume(water.x, water.y, gapeR * 0.55 * ws.gape);
+  // A steady, gentle avoidance of the body itself — a startle, scaled by the
+  // step so it is a rate rather than a kick, and small enough that it never
+  // competes with the lunge that follows it.
+  toWater(ws.cruise, ws.y, depth, stage.camera, bodyWater);
+  if (ws.mass >= 0.03) {
+    shoal.scatter(bodyWater.x, bodyWater.y, frame.halfWidth * 0.9, 34 * ws.mass * dt);
+  }
+
+  /*
+   * Exposure, which was wired and dead.
+   *
+   * `uExposure` is declared in effects/abyss.ts and in scene/field.ts, is
+   * multiplied into the output of both, and was set by nothing — a whole-frame
+   * lever with the cable already run to it. Tied to agitation with a
+   * forty-second time constant it gives the piece the one thing §9
+   * (accumulation) was asking for, without adding a single new piece of state:
+   * a quiet market slowly sinks and a busy one slowly lifts, over minutes, so
+   * that forty minutes in does not look like one minute in.
+   *
+   * The field's copy is applied *before* the bloom threshold, so activity also
+   * changes how much of the water crosses into glow; the post chain's copy is
+   * applied after the tonemap, where it is only a black level, and takes a
+   * fraction of the same swing so the two do not multiply into a flicker.
+   */
+  const wantExposure = 0.80 + state.agitation * 0.48;
+  exposure += (wantExposure - exposure) * (1 - Math.exp(-dt / 40));
+  field.setExposure(exposure);
+  postFx.setExposure(1 + (exposure - 1) * 0.45);
 
   fluid.update(dt, simTime, state.agitation);
   field.update(dt, simTime);
@@ -316,10 +429,18 @@ function step(dt: number): void {
    */
   postFx.lenses.length = 0;
   if (ws.mass >= 0.03) {
-    ndc.set(ws.cruise * 0.4, ws.y, whales.depth()).project(stage.camera);
+    /*
+     * At the body's own screen position — no 0.4.
+     *
+     * Projecting at the real depth already applies the perspective, so scaling
+     * x by another 0.4 applied it twice and put the bend somewhere the mass is
+     * not. A body that curves space forty units from itself is not a body with
+     * mass; it is a smudge with a coincidence.
+     */
+    toNdc(ws.cruise, ws.y, depth, stage.camera, screen);
     postFx.lenses.push({
-      x: ndc.x * 0.5 * stage.aspect(),
-      y: ndc.y * 0.5,
+      x: screen.x * 0.5 * stage.aspect(),
+      y: screen.y * 0.5,
       /*
        * 0.008, not 0.055.
        *

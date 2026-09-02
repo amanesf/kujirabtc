@@ -37,6 +37,8 @@ export interface PostFx {
   render: () => void;
   setSize: (w: number, h: number, aspect: number) => void;
   setTime: (t: number) => void;
+  /** A whole-frame lever, driven by the market (main.ts). */
+  setExposure: (e: number) => void;
   lenses: Lens[];
   shocks: Shock[];
   dispose: () => void;
@@ -99,6 +101,10 @@ export function createPostFx(
 
     setTime(t) {
       abyss.uniforms.uTime.value = t;
+    },
+
+    setExposure(e) {
+      abyss.uniforms.uExposure.value = e;
     },
 
     render() {

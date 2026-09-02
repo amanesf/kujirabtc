@@ -54,6 +54,10 @@ function coin(size: number): string {
 export function createHud(root: HTMLElement, onProvoke: () => void): Hud {
   root.innerHTML = `
     <div class="hud">
+      <div class="frame-inset" aria-hidden="true"></div>
+
+      <h1 class="title">深海の静かなるクジラ</h1>
+
       <header class="hud-top">
         <div class="pair">
           <span class="pair-sym">BTC<span class="slash">/</span>USDT</span>
@@ -64,6 +68,7 @@ export function createHud(root: HTMLElement, onProvoke: () => void): Hud {
 
       <div class="price">
         <span class="price-value">—</span>
+        <i class="price-tick" aria-hidden="true"></i>
         <span class="price-unit">USDT</span>
       </div>
 
@@ -103,7 +108,7 @@ export function createHud(root: HTMLElement, onProvoke: () => void): Hud {
           <span class="legend-item"><i class="sw sw-krill"></i>オキアミ<em>&lt; ${KRILL_MAX}</em></span>
           <span class="legend-item"><i class="sw sw-fish"></i>魚<em>${KRILL_MAX}–<b class="w-line">2.0</b></em></span>
           <span class="legend-item"><i class="sw sw-whale"></i>クジラ<em>&gt; <b class="w-line">2.0</b></em>
-            <button class="provoke" type="button" aria-label="クジラを突進させる">突進</button>
+            <button class="provoke" type="button" aria-label="クジラに大口を開けさせる">大口</button>
           </span>
         </div>
       </footer>
@@ -112,6 +117,7 @@ export function createHud(root: HTMLElement, onProvoke: () => void): Hud {
 
   const q = <T extends Element>(sel: string) => root.querySelector<T>(sel)!;
   const priceValue = q<HTMLElement>('.price-value');
+  const priceTick = q<HTMLElement>('.price-tick');
   const axis = q<HTMLElement>('.axis');
   const dot = q<HTMLElement>('.dot');
   const feedLabel = q<HTMLElement>('.feed-label');
@@ -177,11 +183,20 @@ export function createHud(root: HTMLElement, onProvoke: () => void): Hud {
 
       if (state.price > 0) {
         priceValue.textContent = money.format(state.price);
-        // The direction is carried by colour for a second and a half. It is the
-        // only element on screen allowed to change fast, and it earns that by
-        // being the one number a viewer looks for first.
+        /*
+         * Direction, as a tick rather than as a colour.
+         *
+         * The price was the largest and most saturated thing on the glass, and
+         * on a down tick it turned the same ember the water uses for selling
+         * pressure — so the instrument was speaking the *picture's* colour
+         * language, at a size no fish or wall could compete with, and the eye
+         * went to the number instead of to the ocean. Saturated warm and cold
+         * are reserved for the water now. The number is neutral and the
+         * direction is a two-pixel mark beside it, which is all a direction
+         * has ever needed.
+         */
         if (state.price !== lastPrice) {
-          priceValue.dataset.dir = state.price > lastPrice ? 'up' : 'down';
+          priceTick.dataset.dir = state.price > lastPrice ? 'up' : 'down';
           lastPrice = state.price;
         }
       }
@@ -216,7 +231,12 @@ export function createHud(root: HTMLElement, onProvoke: () => void): Hud {
         const top = project(whale.y);
         // Hidden when the wall is small or the body has left the frame: an
         // annotation pointing off screen is worse than no annotation.
-        const show = whale.w.mass > 0.16 && top > 0.06 && top < 0.94;
+        // The footer — stats, tape and legend — owns the bottom fifth of the
+        // glass, and a specimen label that rode down into it was printed over
+        // the tape. An annotation that collides with another annotation is
+        // worse than no annotation, which is the same reason it hides when the
+        // animal leaves the frame.
+        const show = whale.w.mass > 0.16 && top > 0.09 && top < 0.80;
         s.el.dataset.show = show ? '1' : '0';
         s.el.style.top = `${top * 100}%`;
         s.size.textContent = `${coin(whale.w.size)} BTC`;

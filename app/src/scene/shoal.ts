@@ -40,14 +40,21 @@ interface Fish {
   span: number;
   power: number;
   warm: number;
+  /** 0..1, decaying. Set when this one is being swallowed. */
+  flare: number;
 }
 
 export interface Shoal {
   mesh: THREE.Mesh;
   /** Releases a school. `side` is +1 for a lift, -1 for a hit. */
   spawn: (x: number, y: number, side: number, power: number) => void;
-  /** Scatters whatever is near (x, y). A finger on the glass, or a lunge. */
+  /** Scatters whatever is near (x, y). A finger on the glass, or a whale. */
   scatter: (x: number, y: number, radius: number, strength: number) => void;
+  /**
+   * Eats whatever is inside (x, y). They are drawn in, flare, and are gone —
+   * the only thing in this ocean that ever disappears (plan §13.3.4).
+   */
+  consume: (x: number, y: number, radius: number) => void;
   update: (dt: number, time: number) => void;
   dispose: () => void;
 }
@@ -201,6 +208,7 @@ export function createShoal(): Shoal {
           span: life,
           power,
           warm: side > 0 ? 0 : 1,
+          flare: 0,
         });
       }
     },
@@ -226,6 +234,39 @@ export function createShoal(): Shoal {
       }
     },
 
+    consume(x, y, radius) {
+      /*
+       * What "eaten" looks like.
+       *
+       * Nothing in this ocean died before this: the krill wrap forever and the
+       * fish simply time out wherever they happen to be. So a lunge that took
+       * a school into its mouth gave every one of them back a second later,
+       * and an event with no consequence is not an event — the fish crossing
+       * the jaws unharmed was quietly telling the viewer that the mouth is
+       * scenery.
+       *
+       * They are pulled the last of the way in rather than snapped out, they
+       * flare as they go (a startled fish fires everything it has, and it is
+       * also simply the right shape for an ending: brightest at the last
+       * instant), and a quarter of a second later there is nothing there. The
+       * flare is what makes it read as swallowed instead of as a dropped
+       * frame.
+       */
+      const r2 = radius * radius;
+      for (const f of pool) {
+        const dx = x - f.pos.x;
+        const dy = y - f.pos.y;
+        const d2 = dx * dx + dy * dy;
+        if (d2 > r2) continue;
+        const d = Math.sqrt(d2) + 1e-4;
+        f.vel.x += (dx / d) * 9;
+        f.vel.y += (dy / d) * 9;
+        f.flare = 1;
+        f.life = Math.min(f.life, 0.3);
+        f.span = Math.max(f.span, 0.3);
+      }
+    },
+
     update(dt, time) {
       let n = 0;
       for (let i = pool.length - 1; i >= 0; i--) {
@@ -235,6 +276,7 @@ export function createShoal(): Shoal {
           pool.splice(i, 1);
           continue;
         }
+        f.flare = Math.max(0, f.flare - dt / 0.3);
         f.pos.addScaledVector(f.vel, dt);
         // They coast rather than stopping dead, so the school stretches out and
         // the light goes out from the back.
@@ -269,7 +311,8 @@ export function createShoal(): Shoal {
         // Fades in over the first sixth of its life and out over the rest. An
         // instant appearance is a pop, and a pop is the one thing a picture
         // about stillness cannot afford.
-        shapes[n * 4 + 2] = (0.5 + f.power * 1.25) * Math.min(1, (1 - k) * 6) * k * k;
+        shapes[n * 4 + 2] = (0.5 + f.power * 1.25) * Math.min(1, (1 - k) * 6) * k * k
+                          + f.flare * f.flare * 3.0;
         shapes[n * 4 + 3] = f.warm;
         beats[n * 2 + 0] = f.phase + time * f.beat;
         // The beat deepens with speed: a fish holding station barely moves, one

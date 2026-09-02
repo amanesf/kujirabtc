@@ -42,9 +42,16 @@ export interface WhaleState {
   warm: number;
   /** 0..1, decays fast. A print landing on this side. */
   flash: number;
-  /** 0..1 lunge envelope, and the gape that lags it. */
+  /** Where the animal is in the five phases of a lunge (plan §13.3.2). */
+  phase: LungePhase;
+  /** Seconds spent in the present phase. */
+  phaseT: number;
+  /** 0..1 how committed the present lunge is. Drives the stroke's depth. */
   lunge: number;
+  /** The jaw, 0 shut and 1 open. Lags the decision in both directions. */
   gape: number;
+  /** Multiplier on cruise speed, eased. Positive is a charge, negative a brake. */
+  boost: number;
   /** 0..1: the rare ascent (plan §3). */
   ascend: number;
   /** Where along its own track it presently is, world units. */
@@ -57,11 +64,41 @@ export interface WhaleState {
   turnTarget: 0 | 1;
 }
 
+/**
+ * The five phases, and the order matters because the old one was wrong.
+ *
+ * What was here was a single envelope — lunge = 1, then 2.4 seconds of linear
+ * decay — with the mouth opening *while the body was still accelerating*,
+ * which is backwards for the animal and backwards for the picture. A rorqual
+ * opens at the end of the charge, and the moment that reads as feeding is not
+ * the acceleration but the stop: the filled pouch is a parachute and a fin
+ * whale comes very nearly to a halt in a second.
+ *
+ *   aim      up to 3s   turn toward the middle of the track if facing away
+ *   run      2–4s       accelerate; the stroke deepens on its own with effort
+ *   engulf   1.5s       fires on *reaching the centre*, not on a timer, and
+ *                       brakes hard. This is the moment
+ *   recover  8s         the pouch drains and the body returns to cruise
+ *
+ * Opening on position rather than on elapsed time is also what quietly fixes
+ * the third complaint from watching it: the event cannot happen at the ends of
+ * the track any more, so the animal is never cropped by the frame while doing
+ * the one thing worth watching.
+ */
+export type LungePhase = 'none' | 'aim' | 'run' | 'engulf' | 'recover';
+
 export interface Whales {
   mesh: THREE.Mesh;
   state: WhaleState;
-  /** Starts a lunge. Returns the world position of the mouth. */
-  lungeAt: () => THREE.Vector3;
+  /** Asks for a lunge. What happens next is up to the phase machine. */
+  beginLunge: (power: number) => void;
+  /**
+   * Called on the frame the jaw opens, with the mouth in the animal's own
+   * space. main.ts is what turns that into water, a shock and a shove.
+   */
+  setOnEngulf: (fn: (mouth: THREE.Vector3, power: number) => void) => void;
+  /** The mouth's present position, in the animal's own space. */
+  mouth: (out: THREE.Vector3) => THREE.Vector3;
   update: (dt: number, time: number, camera: THREE.PerspectiveCamera) => void;
   setLight: (x: number, y: number, z: number, strength: number) => void;
   setBoundary: (y: number) => void;
@@ -180,6 +217,34 @@ float sdWhale(vec3 p, float R, float L, float wave, float gape) {
   r = max(r, 0.085 * R * head);
   float body = length(yz) - r;
   body += max(abs(p.x) - L, 0.0);
+
+  /*
+   * The mouth, which did not exist.
+   *
+   * The body was head, flukes, dorsal, pectoral and pleats — no opening
+   * anywhere — so a "lunge" was a throat that swelled downward while the face
+   * stayed shut. That is almost certainly the largest single reason it did not
+   * read as feeding: a whale with a closed mouth is a whale that is not eating,
+   * whatever else is happening to it.
+   *
+   * It is cut rather than modelled: the intersection of three half-spaces —
+   * forward of a hinge at t = 0.78, below the palate, and above a lower jaw
+   * plane rotated open by the gape — subtracted from the body. A max of plane
+   * distances stays Lipschitz, which the sphere tracer requires and which a
+   * rotated sampling coordinate would have broken (that bug is already in the
+   * record once, as the faceted flanks).
+   *
+   * Nothing lights the inside. The shading here has no ambient term at all, so
+   * the cavity comes out as an actual hole in the animal — which is what an
+   * open mouth is, and it costs three dot products.
+   */
+  vec2 q = vec2(p.x - L * 0.56, p.y);
+  float ang = gape * 1.15;
+  vec2 nJaw = vec2(sin(ang), cos(ang));
+  float cavity = max(max(q.y + R * (0.015 + gape * 0.05), -dot(q, nJaw)), -q.x);
+  // Never wider than the head it is cut into, or the jaw would open the flanks.
+  cavity = max(cavity, abs(p.z) - r * 0.92);
+  body = max(body, -cavity);
 
   // The flukes: a thin horizontal blade behind the peduncle.
   vec3 f = p - vec3(-L * 1.02, 0.0, 0.0);
@@ -317,7 +382,15 @@ vec3 shade(vec3 p, vec3 lp, vec3 n, vec3 rd, vec3 tint, float mass, float flash,
   float mottle = fbm(p * 0.075);
   float scars = smoothstep(0.56, 0.74, fbm(p * 0.30 + 11.0));
   float barnacle = smoothstep(0.68, 0.88, fbm(p * 1.10 + 31.0));
-  float skin = 0.048 + mottle * 0.045 + scars * 0.085 + barnacle * 0.20;
+  /*
+   * 0.06, not 0.20.
+   *
+   * At four times the base albedo the barnacles *were* the skin: every lit
+   * patch came back as mottled grey rock, and a grey rock is the one thing a
+   * body must not look like. They are an accent on an animal, not its
+   * material.
+   */
+  float skin = 0.048 + mottle * 0.045 + scars * 0.085 + barnacle * 0.06;
 
   /*
    * The white right jaw.
@@ -332,6 +405,17 @@ vec3 shade(vec3 p, vec3 lp, vec3 n, vec3 rd, vec3 tint, float mass, float flash,
             * smoothstep(0.0, 0.45 * R, lp.z);
   skin += jaw * 0.42;
 
+  /*
+   * Countershading, which is the strongest identification cue a marine animal
+   * has and costs one smoothstep: dark along the back, pale underneath. Every
+   * animal that swims in open water is painted this way, because it is what
+   * cancels the light coming from above — and the eye knows it well enough
+   * that its absence is what made this body read as an object rather than as
+   * a fish-shaped thing that is alive.
+   */
+  float ventral = smoothstep(0.45 * R, -0.55 * R, lp.y);
+  skin *= mix(0.60, 1.30, ventral);
+
   vec3 toLight = uLight.xyz - p;
   float dist = length(toLight);
   float lambert = max(dot(n, toLight / dist), 0.0);
@@ -341,6 +425,14 @@ vec3 shade(vec3 p, vec3 lp, vec3 n, vec3 rd, vec3 tint, float mass, float flash,
   float lit = uLight.w * lambert * exp(-dist * 0.075);
 
   vec3 col = tint * skin * lit * 1.7;
+  /*
+   * One narrow specular. Almost the entire visual difference between wet skin
+   * and stone is the width of the highlight: a broad one is rock, a tight one
+   * is something with a film of water on it. It is tinted toward white rather
+   * than toward the body, because a reflection is the colour of the *light*.
+   */
+  vec3 hv = normalize(normalize(toLight) - rd);
+  col += mix(tint, vec3(1.0), 0.6) * pow(max(dot(n, hv), 0.0), 64.0) * lit * 0.9;
   col += tint * fres * (0.075 + mass * 0.115 + flash * 0.8);
   // A trace of scattering through the near surface: without it the unlit body
   // is pure black inside a bright contour, and a bright contour around nothing
@@ -476,8 +568,11 @@ export function createWhales(): Whales {
     distance: 0.5,
     warm: 0.5,
     flash: 0,
+    phase: 'none',
+    phaseT: 0,
     lunge: 0,
     gape: 0,
+    boost: 0,
     ascend: 0,
     cruise: 0,
     stroke: 0,
@@ -496,8 +591,31 @@ export function createWhales(): Whales {
     return Math.cos(Math.PI * turnEase());
   }
 
-  const mouth = new THREE.Vector3();
+  const mouthPos = new THREE.Vector3();
   let depth = -90;
+  let power = 0.8;
+  let onEngulf: (mouth: THREE.Vector3, power: number) => void = () => {};
+
+  /*
+   * The mouth is at the front of the animal, and the front is wherever the
+   * body is presently pointed — cos(YAW + swing), not cos(YAW) scaled by the
+   * forward speed. The two agree at each end of the track and disagree
+   * completely in the middle of a turn, where the old form put the mouth at
+   * the body's centre: a lunge landing there drew its vortex out of the
+   * animal's flank rather than out of its jaws.
+   *
+   * It is returned in the *animal's* space, which is the whole point of it
+   * being a function rather than a number — core/space.ts is what carries it
+   * into the water, and nothing downstream is allowed to guess.
+   */
+  function mouthAt(out: THREE.Vector3): THREE.Vector3 {
+    const L = 15 + state.mass * 15;
+    return out.set(
+      state.cruise + Math.cos(YAW + Math.PI * turnEase()) * L * 0.95,
+      state.y - 1.5,
+      0,
+    );
+  }
 
   /*
    * The backdrop quad has to cover the frustum, and it has to keep covering it.
@@ -520,24 +638,23 @@ export function createWhales(): Whales {
     state,
     depth: () => depth,
 
-    lungeAt() {
-      state.lunge = 1;
-      const L = 15 + state.mass * 15;
-      /*
-       * The mouth is at the front of the animal, and the front is wherever the
-       * body is presently pointed — cos(YAW + swing), not cos(YAW) scaled by
-       * the forward speed. The two agree at each end of the track and disagree
-       * completely in the middle of a turn, where the old form put the mouth at
-       * the body's centre: a lunge landing there drew its vortex out of the
-       * animal's flank rather than out of its jaws.
-       */
-      mouth.set(
-        state.cruise + Math.cos(YAW + Math.PI * turnEase()) * L * 0.95,
-        state.y - 1.5,
-        0,
-      );
-      return mouth;
+    beginLunge(p) {
+      // A second call during a run is a bigger appetite, not a second animal:
+      // it raises the power and leaves the sequence it is already committed to
+      // alone. Restarting would reset the charge to nothing every time the
+      // tape delivered a burst, which is exactly when it must not.
+      power = state.phase === 'none' ? p : Math.max(power, p);
+      if (state.phase === 'none' || state.phase === 'recover') {
+        state.phase = 'aim';
+        state.phaseT = 0;
+      }
     },
+
+    setOnEngulf(fn) {
+      onEngulf = fn;
+    },
+
+    mouth: (out) => mouthAt(out),
 
     fit(camera) {
       fitTo(camera);
@@ -577,6 +694,83 @@ export function createWhales(): Whales {
       else if (state.cruise < -range) state.turnTarget = 0;
 
       /*
+       * The lunge, phase by phase (plan §13.3.2, and the type above).
+       *
+       * Everything here decides two numbers — where the turn is going and what
+       * the boost is aiming at — and then lets the existing swim integrate
+       * them. That is deliberate: the stroke rate and depth already follow
+       * effort, so a charge deepens the beat and a brake flattens it without
+       * this code saying anything about the tail.
+       */
+      const toCentre = state.cruise > 0 ? 1 : 0;
+      let boostWant = 0;
+      let gapeWant = 0;
+      state.phaseT += dt;
+      // How fast the heading is closing on the middle of the track: +1 is
+      // straight at it, -1 is straight away from it.
+      const closing = heading() * (state.cruise > 0 ? -1 : 1);
+
+      if (state.phase === 'aim') {
+        // A hunting turn is allowed to be quick. The 26 seconds a cruising
+        // turn takes is a statement about tip speed against forward speed, and
+        // at eight times the forward speed that ratio is unchanged — so the
+        // body may come round eight times faster without ever looking like it
+        // was spun by a hand.
+        state.turnTarget = toCentre;
+        boostWant = -0.25;
+        if ((closing > 0.6 && state.phaseT > 0.6) || state.phaseT > 3) {
+          state.phase = 'run';
+          state.phaseT = 0;
+        }
+      } else if (state.phase === 'run') {
+        state.turnTarget = toCentre;
+        boostWant = 7.5 * power;
+        /*
+         * The jaw opens on *arriving*, not after n seconds.
+         *
+         * A timer put the open mouth wherever the animal happened to be, which
+         * on a track wider than the frame meant it regularly happened off the
+         * side of the picture — the "it gets cropped" complaint. Firing on
+         * position makes the geometry of the event and the geometry of the
+         * frame the same thing, and no clamp or special case is needed.
+         */
+        if (Math.abs(state.cruise) < 3.5 || state.phaseT > 4.5) {
+          state.phase = 'engulf';
+          state.phaseT = 0;
+          onEngulf(mouthAt(mouthPos), power);
+        }
+      } else if (state.phase === 'engulf') {
+        // The brake. A rorqual that has taken in more water than it weighs is
+        // dragging a parachute and stops almost dead; that stop is the single
+        // most legible instant in the whole sequence, and it is *free* — the
+        // drag is the same number as the pouch.
+        boostWant = -0.82;
+        gapeWant = 1;
+        if (state.phaseT > 1.5) {
+          state.phase = 'recover';
+          state.phaseT = 0;
+        }
+      } else if (state.phase === 'recover') {
+        boostWant = 0;
+        if (state.phaseT > 8) {
+          state.phase = 'none';
+          state.phaseT = 0;
+        }
+      }
+
+      /*
+       * Attack fast, release slow — the same envelope as everything else in
+       * the piece (plan §7). Accelerating takes a second and a half, braking
+       * takes a third of one, and coming back to cruise takes four: the charge
+       * is effort, the stop is an impact, and the recovery is exhaustion.
+       */
+      const boostTau = boostWant > state.boost
+        ? (state.phase === 'run' ? 1.5 : 1.0)
+        : (state.phase === 'engulf' ? 0.32 : 4.0);
+      state.boost += (boostWant - state.boost) * (1 - Math.exp(-dt / boostTau));
+      state.lunge = Math.max(0, Math.min(1, state.boost / 6));
+
+      /*
        * Twenty-six seconds, not nine, and the reason is the body's length.
        *
        * A nine-second reversal looked like a lurch, and it was one: the centre
@@ -594,7 +788,7 @@ export function createWhales(): Whales {
        * sight of the cruise speed; nothing else does.
        */
       const before = turnEase();
-      const rate = dt / 26;
+      const rate = (dt / 26) * (state.phase === 'aim' || state.phase === 'run' ? 8 : 1);
       state.turn = state.turnTarget === 1
         ? Math.min(1, state.turn + rate)
         : Math.max(0, state.turn - rate);
@@ -622,7 +816,10 @@ export function createWhales(): Whales {
        */
       const lane = 0.5 - 0.5 * Math.cos(Math.PI * turnEase());
 
-      const speed = 0.85 + state.mass * 0.4 + state.lunge * 8.0;
+      // Never quite zero: a body that stops dead in water it has just thrown
+      // into motion is a body that was switched off.
+      const base = 0.85 + state.mass * 0.4;
+      const speed = Math.max(0.10, base * (1 + state.boost));
       state.cruise += speed * heading() * dt;
 
       /*
@@ -636,15 +833,16 @@ export function createWhales(): Whales {
        * stroking at the top of a turn, where its forward progress is zero, and
        * a tail that stopped there would look like the animal had been paused.
        */
-      const effort = Math.min(1, (speed - 0.85) / 1.6);
+      const effort = Math.max(0, Math.min(1, (speed - 0.85) / 1.6));
       const hz = 0.20 + effort * 0.40;
       state.stroke = (state.stroke + hz * 2 * Math.PI * dt) % (2 * Math.PI);
 
-      state.lunge = Math.max(0, state.lunge - dt / 2.4);
-      // The gape lags the decision and closes more slowly than it opens, which
-      // is what makes the pouch look heavy with water rather than elastic.
-      const wanted = Math.sin(Math.min(1, state.lunge) * Math.PI) ** 0.6;
-      state.gape += (wanted - state.gape) * (1 - Math.exp(-dt / (wanted > state.gape ? 0.28 : 0.9)));
+      // The gape lags the decision and closes far more slowly than it opens,
+      // which is what makes the pouch look heavy with water rather than
+      // elastic: a fin whale's throat takes the better part of a minute to
+      // drain, and even a compressed version of that is unmistakable.
+      state.gape += (gapeWant - state.gape)
+                  * (1 - Math.exp(-dt / (gapeWant > state.gape ? 0.28 : 2.2)));
       state.ascend = Math.max(0, state.ascend - dt / 26);
       state.flash *= Math.exp(-dt / 0.15);
 

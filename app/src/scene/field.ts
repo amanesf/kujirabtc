@@ -30,6 +30,13 @@ export interface Field {
   setExtent: (halfWidth: number, halfHeight: number) => void;
   /** 0..1: how much of the moving light is currently on the field. */
   setLight: (x: number, y: number, strength: number) => void;
+  /**
+   * Where the whale's open mouth is, in the water's own space, and how open.
+   * Krill inside it are being swallowed and go dark (plan §13.3.4).
+   */
+  setMouth: (x: number, y: number, radius: number, strength: number) => void;
+  /** The slow market-driven exposure. Shared with the post chain. */
+  setExposure: (e: number) => void;
   dispose: () => void;
 }
 
@@ -187,6 +194,7 @@ void main() {
 const FRAGMENT_SHADER = /* glsl */ `
 uniform float uBoundary;
 uniform vec3 uLight;   // xy world position, z strength
+uniform vec4 uMouth;   // xy world position, z radius, w how open
 uniform float uExposure;
 
 varying float vSpeed;
@@ -242,6 +250,23 @@ void main() {
   float lit = uLight.z * exp(-distance(vWorld.xy, uLight.xy) * 0.11);
   lum = mix(lum, 0.034 + lit * 2.1, heavy);
   tint = mix(tint, mix(tint, vec3(0.86, 0.94, 1.0), 0.7), heavy);
+
+  /*
+   * Swallowed.
+   *
+   * Krill do not die in this ocean — they wrap, so that the field has no clock
+   * (see the position shader) — but a lunge that takes a hundred thousand
+   * bodies into a mouth and gives every one of them back is a lunge that ate
+   * nothing. Inside the pouch they simply stop being lit: they are behind a
+   * closing jaw, in the one volume of this water where there is no light at
+   * all, and darkness is the only disappearance this design will accept.
+   *
+   * The edge is soft, so what is seen is a shadow drawing itself over the
+   * swarm as the mouth arrives rather than a disc switching off.
+   */
+  float swallowed = uMouth.w * exp(-dot(vWorld.xy - uMouth.xy, vWorld.xy - uMouth.xy)
+                                   / max(uMouth.z * uMouth.z, 1e-4));
+  lum *= 1.0 - 0.92 * clamp(swallowed, 0.0, 1.0);
 
   gl_FragColor = vec4(tint * lum * uExposure * core * vFade, 1.0);
 }
@@ -324,6 +349,7 @@ export function createField(
       uSize: { value: posU.uSize.value },
       uBoundary: { value: 0 },
       uLight: { value: new THREE.Vector3(0, 0, 0) },
+      uMouth: { value: new THREE.Vector4(0, 0, 1, 0) },
       uExposure: { value: 1 },
     },
     transparent: true,
@@ -359,6 +385,12 @@ export function createField(
     },
     setLight(x, y, strength) {
       material.uniforms.uLight.value.set(x, y, strength);
+    },
+    setMouth(x, y, radius, strength) {
+      material.uniforms.uMouth.value.set(x, y, radius, strength);
+    },
+    setExposure(e) {
+      material.uniforms.uExposure.value = e;
     },
     dispose() {
       gpu.dispose();

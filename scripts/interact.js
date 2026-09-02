@@ -57,14 +57,8 @@ await page.waitForFunction(
 await page.waitForTimeout(6000);
 console.log('feed:', await page.textContent('.feed-label'));
 
-// The caret, both ways.
-console.log('legend at start:', await page.getAttribute('.legend', 'data-open'));
-await page.click('.legend-toggle');
-console.log('after one click:', await page.getAttribute('.legend', 'data-open'),
-  'aria-expanded:', await page.getAttribute('.legend-toggle', 'aria-expanded'));
-await page.click('.legend-toggle');
-console.log('after two clicks:', await page.getAttribute('.legend', 'data-open'));
-await page.click('.legend-toggle');
+// The legend is a strip now and has no caret; the one control on the glass is
+// the whale's, and what it does is measured below.
 
 const clip = { x: 95, y: 400, width: 200, height: 200 };
 await page.screenshot({ path: 'shots/tap-before.png', clip, timeout: 180000 });
@@ -81,6 +75,54 @@ await page.screenshot({ path: 'shots/tap-after.png', clip, timeout: 180000 });
 await page.waitForTimeout(3500);
 await page.screenshot({ path: 'shots/tap-settle.png', clip, timeout: 180000 });
 console.log('wrote shots/tap-{before,after,settle}.png');
+
+/*
+ * The button, and the edge of the frame.
+ *
+ * This is the measurement that found the bug: a lunge used to project its
+ * shock ring at the wrong depth, which put its centre far off screen and left
+ * its front lying along the border, where the three colour channels are
+ * clamped separately and separate. The left twelve columns went from a
+ * neutral (2.62, 2.64, 2.66) to (15.52, 11.67, 10.61) — six times brighter and
+ * visibly red — while the middle of the picture did not move at all.
+ *
+ * So the check is: press it, and watch the border. The mean of the leftmost
+ * strip must stay neutral (the three channels within a few per cent of each
+ * other) and must not jump. The middle is sampled alongside it as the control.
+ */
+const edge = async () => {
+  // The frame is screenshotted and then decoded *in the page*, because the
+  // WebGL canvas is drawn without a preserved buffer — reading it directly
+  // gives back whatever the driver felt like leaving there.
+  const png = (await page.screenshot({ timeout: 180000 })).toString('base64');
+  return page.evaluate(async (data) => {
+    const img = new Image();
+    img.src = `data:image/png;base64,${data}`;
+    await img.decode();
+    const g = document.createElement('canvas');
+    g.width = img.width; g.height = img.height;
+    const ctx = g.getContext('2d');
+    ctx.drawImage(img, 0, 0);
+    const mean = (x, w) => {
+      const d = ctx.getImageData(x, Math.round(img.height * 0.25), w,
+                                 Math.round(img.height * 0.5)).data;
+      let r = 0, gg = 0, b = 0;
+      for (let i = 0; i < d.length; i += 4) { r += d[i]; gg += d[i + 1]; b += d[i + 2]; }
+      const n = d.length / 4;
+      return [r / n, gg / n, b / n].map((v) => +v.toFixed(2));
+    };
+    return { left: mean(0, 12), mid: mean(Math.round(img.width / 2) - 6, 12) };
+  }, png);
+};
+
+console.log('before  ', JSON.stringify(await edge()));
+await page.click('.provoke');
+// The sequence is long now — aim, run, the jaw, the brake, the recovery — so
+// the border is watched across the whole of it rather than for half a second.
+for (let i = 1; i <= 8; i++) {
+  await page.waitForTimeout(1000);
+  console.log(`+${i}s    `, JSON.stringify(await edge()));
+}
 
 await browser.close();
 server.close();

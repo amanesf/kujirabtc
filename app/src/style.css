@@ -110,6 +110,38 @@ body.ready #loader { opacity: 0; }
 }
 body.ready .hud { opacity: 1; }
 
+/*
+ * The title, and the frame.
+ *
+ * §8 declares the grammar — this is the window of a submersible and the
+ * readout is its survey overlay — and then the screen had no instrument frame
+ * at all, which left the whole thing reading as a full-bleed wallpaper with
+ * text floating on it. One hairline inset a few pixels from the edge is the
+ * entire difference between a wallpaper and a porthole, and it costs a div.
+ *
+ * The title is small and very widely spaced, because it is a plate on an
+ * instrument rather than a masthead: it should be findable and never loud.
+ */
+.frame-inset {
+  position: absolute;
+  inset: calc(env(safe-area-inset-top) + 7px) calc(env(safe-area-inset-right) + 7px)
+         calc(env(safe-area-inset-bottom) + 7px) calc(env(safe-area-inset-left) + 7px);
+  border: 1px solid rgba(120, 170, 200, 0.11);
+  border-radius: 2px;
+}
+
+.title {
+  margin: 0 0 12px;
+  text-align: center;
+  font-weight: 400;
+  font-size: 10px;
+  letter-spacing: 0.48em;
+  /* The tracking is applied on the right of every glyph including the last,
+   * which pushes a centred line visibly off centre without this. */
+  text-indent: 0.48em;
+  color: var(--dim);
+}
+
 .hud-top {
   display: flex;
   justify-content: space-between;
@@ -161,18 +193,43 @@ body.ready .hud { opacity: 1; }
   align-items: baseline;
   gap: 6px;
 }
+/*
+ * 22px and neutral, down from 30px and saturated.
+ *
+ * It was the biggest, brightest, most saturated element on the glass, and its
+ * down-tick colour was the *same ember the water uses for selling pressure* —
+ * the instrument was using the picture's own colour language, louder than the
+ * picture. Saturated warm and cold are the ocean's vocabulary and nothing else
+ * gets to borrow them: the number is the colour of the instrument, and the
+ * direction is the hairline tick beside it.
+ */
 .price-value {
   font-family: var(--mono);
   /* Tabular figures, or the price jitters horizontally on every tick and the
    * eye reads the jitter instead of the number. */
   font-variant-numeric: tabular-nums;
-  font-size: 30px;
+  font-size: 22px;
   letter-spacing: -0.01em;
-  color: #eaf6ff;
-  transition: color 1.4s ease-out;
+  color: var(--ink);
 }
-.price-value[data-dir="up"] { color: var(--cold); transition: color 0.06s; }
-.price-value[data-dir="down"] { color: var(--warm); transition: color 0.06s; }
+.price-tick {
+  width: 0;
+  height: 0;
+  opacity: 0;
+  border-left: 3px solid transparent;
+  border-right: 3px solid transparent;
+  transition: opacity 2.2s ease-out;
+}
+.price-tick[data-dir="up"] {
+  opacity: 0.85;
+  border-bottom: 4px solid rgba(185, 212, 230, 0.75);
+  transition: opacity 0.06s;
+}
+.price-tick[data-dir="down"] {
+  opacity: 0.85;
+  border-top: 4px solid rgba(185, 212, 230, 0.75);
+  transition: opacity 0.06s;
+}
 .price-unit {
   font-family: var(--mono);
   font-size: 10px;
@@ -433,7 +490,7 @@ body.ready .hud { opacity: 1; }
 /* A landscape phone or a desktop window: the frame gets wide, so the
  * instrument moves out of the way of a picture that is now mostly horizontal. */
 @media (min-aspect-ratio: 1/1) {
-  .price-value { font-size: 36px; }
+  .price-value { font-size: 26px; }
   .gauge { top: 30%; height: 40%; }
   .legend { gap: 20px; font-size: 10.5px; }
 }
