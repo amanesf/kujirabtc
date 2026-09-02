@@ -1,0 +1,8 @@
+{
+  "name": "kujirabtc-tooling",
+  "private": true,
+  "description": "Root-level tooling: the capture loop (scripts/capture.js). The app itself lives in app/.",
+  "devDependencies": {
+    "playwright": "^1.62.1"
+  }
+}
