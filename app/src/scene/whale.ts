@@ -314,11 +314,19 @@ float sdWhale(vec3 p, float R, float L, float wave, float gape) {
    * a distance and, once the animal came close, a set of wide bands like a
    * beach ball. Twenty cycles is the right count for the animal; the amplitude
    * comes down to match so that the product of the two — which is all the
-   * distance field cares about — stays a quarter, well inside what a sphere
-   * tracer will follow.
+   * distance field cares about — stays small, well inside what a sphere tracer
+   * will follow.
+   *
+   * And they were in the wrong half of the animal. t is zero at the *flukes*,
+   * so a mask of smoothstep(0.05, 0.75, t) carved them from the tail stock
+   * forward to mid-body — a striped back end, which no rorqual has and which
+   * turned into a zebra the moment the rim was raised, because every crest
+   * caught its own contour. They run from the chin to about the navel, which
+   * is t from roughly 0.95 down to 0.5, and nowhere else.
    */
-  float pleat = sin(p.z * (20.0 / R)) * (0.011 + gape * 0.014) * R
-              * smoothstep(0.05, 0.75, t) * smoothstep(0.15 * R, -0.4 * R, p.y);
+  float pleat = sin(p.z * (20.0 / R)) * (0.006 + gape * 0.012) * R
+              * smoothstep(0.42, 0.58, t) * smoothstep(0.99, 0.90, t)
+              * smoothstep(0.15 * R, -0.4 * R, p.y);
   return d + pleat;
 }
 
@@ -403,7 +411,12 @@ bool march(vec3 ro, vec3 rd, vec3 c, float R, float L, float wave, float gape, m
       coverage = 1.0;
       tHit = t;
       lp = q;
-      vec2 e = vec2(max(0.03, R * 0.025), 0.0);
+      // Half what it was. The normal is a difference over this distance, and
+      // at the silhouette — where the surface curves away fastest — too wide a
+      // stencil returns a direction that jitters from pixel to pixel. With the
+      // rim now keyed to exactly that angle, the jitter shows up as black
+      // speckle along the contour.
+      vec2 e = vec2(max(0.02, R * 0.012), 0.0);
       vec3 n = normalize(vec3(
         sdWhale(q + e.xyy, R, L, wave, gape) - sdWhale(q - e.xyy, R, L, wave, gape),
         sdWhale(q + e.yxy, R, L, wave, gape) - sdWhale(q - e.yxy, R, L, wave, gape),
@@ -435,9 +448,24 @@ bool march(vec3 ro, vec3 rd, vec3 c, float R, float L, float wave, float gape, m
  */
 vec3 shade(vec3 p, vec3 lp, vec3 n, vec3 rd, vec3 tint, float mass, float flash,
            float R, float L, float gape) {
-  // Fifth power: on a body this long most of the visible surface is at a
-  // glancing angle, so a soft rim floods the flank instead of edging it.
-  float fres = pow(1.0 - abs(dot(n, rd)), 5.0);
+  /*
+   * Two rims, not one.
+   *
+   * The fifth power is a *flood*: on a body this long most of the visible
+   * surface is at a glancing angle, so it washes the whole flank faintly — and
+   * that is what gives the animal its volume. What it cannot do is draw a
+   * line, because by the time it is bright enough to be one it has lifted the
+   * entire flank with it.
+   *
+   * So the contour is a second term at a much higher power, which is nothing
+   * anywhere except in the last few degrees before the silhouette. The flood
+   * says how big the body is; the line says exactly where it ends. Together
+   * they are the picture the piece is actually about: a shape you can read the
+   * edge of and cannot see the inside of.
+   */
+  float graze = 1.0 - abs(dot(n, rd));
+  float fres = pow(graze, 5.0);
+  float edge = pow(graze, 14.0);
 
   /*
    * Three scales of skin, because the body is now seen from forty units as
@@ -569,7 +597,19 @@ vec3 shade(vec3 p, vec3 lp, vec3 n, vec3 rd, vec3 tint, float mass, float flash,
    * most of the describing, with just enough inside the lit patch to know that
    * it is skin: a body you can see the *shape* of and cannot quite see.
    */
-  col += tint * fres * (0.085 + mass * 0.090 + flash * 0.5);
+  col += tint * fres * (0.150 + mass * 0.130 + flash * 0.5);
+  /*
+   * The line, and it is allowed to bloom.
+   *
+   * Everywhere else this file is careful to keep the animal under the bloom
+   * threshold, because a whale that glows is a lamp. The last degree of the
+   * silhouette is the exception: a contour that just crosses it picks up a
+   * thread of halo from the post chain, which is what light scattering round
+   * the edge of a large body in water actually looks like — and it is the one
+   * place the glow describes the animal rather than replacing it. Cooled
+   * toward white, because scattered light loses the body's colour.
+   */
+  col += mix(tint, vec3(0.74, 0.94, 1.0), 0.55) * edge * (0.24 + mass * 0.22);
   // A trace of scattering through the near surface: without it the unlit body
   // is pure black inside a bright contour, and a bright contour around nothing
   // is an *outline*, which would make this a drawing of a whale.
@@ -664,7 +704,10 @@ void main() {
       // lay the rim colour in at partial strength rather than shade a surface
       // the ray never actually reached.
       float veil = exp(-0.013 * max(length(vWorld - uCam) * 2.0 - 34.0, 0.0));
-      col = mix(col, tint * (0.10 + mass * 0.16), coverage * 0.55 * veil);
+      // Matched to the rim just inside it: left where it was, the antialiased
+      // outer edge came out darker than the contour it is supposed to be the
+      // fringe of, which puts a thin dark seam around a bright line.
+      col = mix(col, tint * (0.20 + mass * 0.30), coverage * 0.55 * veil);
     }
   }
 
