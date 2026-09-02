@@ -116,7 +116,7 @@ export function createObserver(): Observer {
       // Held well in front of the body rather than against it: pressed close,
       // the falloff stopped discriminating and the lit part came out a flat
       // white blob instead of a patch of skin with a shape to it.
-      light.z = 23.0 + Math.sin(time / 26.7) * 7.0;
+      light.z = 15.0 + Math.sin(time / 26.7) * 5.0;
       light.w = 0.60 + 0.40 * (0.5 + 0.5 * Math.sin(time / 11.0));
     },
   };

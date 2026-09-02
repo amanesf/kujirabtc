@@ -54,6 +54,8 @@ export interface WhaleState {
   boost: number;
   /** 0..1 how far the lunge has brought it toward the glass. Eased. */
   near: number;
+  /** 0..1 how hard it is presently working. Drives the beat and the wake. */
+  effort: number;
   /** 0..1: the rare ascent (plan §3). */
   ascend: number;
   /** Where along its own track it presently is, world units. */
@@ -103,6 +105,10 @@ export interface Whales {
   mouth: (out: THREE.Vector3) => THREE.Vector3;
   /** The body's present girth, in world units. Sizes the mouth's reach. */
   girth: () => number;
+  /** The flukes' present position, in the animal's own space. */
+  tail: (out: THREE.Vector3) => THREE.Vector3;
+  /** Unit heading in the animal's own space: which way the body is pointed. */
+  headingX: () => number;
   update: (dt: number, time: number, camera: THREE.PerspectiveCamera) => void;
   setLight: (x: number, y: number, z: number, strength: number) => void;
   setBoundary: (y: number) => void;
@@ -250,8 +256,24 @@ float sdWhale(vec3 p, float R, float L, float wave, float gape) {
   cavity = max(cavity, abs(p.z) - r * 0.92);
   body = max(body, -cavity);
 
-  // The flukes: a thin horizontal blade behind the peduncle.
+  /*
+   * The flukes, pitched.
+   *
+   * They were a rigid horizontal blade carried along by the body's wave, which
+   * is a paddle being slid through water rather than a tail: a fluke works
+   * because it meets the water at an *angle*, and the angle is the slope of
+   * the very wave that is already being applied. Taking that slope at the
+   * fluke's own station gives a rigid rotation — the same everywhere on the
+   * blade, so the distance field stays isometric — and the blade now leads and
+   * feathers through each beat the way a real one does. It is the single
+   * cheapest thing that separates swimming from being towed.
+   */
+  float k = (1.7 / L) * PI;
+  float fx = -L * 1.02;
+  float slope = cos(fx * k - uSwim.z) * wave * smoothstep(0.5 * L, -L, fx) * k;
+  float pitch = atan(slope) * 0.85;
   vec3 f = p - vec3(-L * 1.02, 0.0, 0.0);
+  f.xy = mat2(cos(pitch), -sin(pitch), sin(pitch), cos(pitch)) * f.xy;
   float fluke = length(vec3(max(abs(f.x) - R * 0.55, 0.0),
                             f.y * 4.2,
                             max(abs(f.z) - R * 1.7 * smoothstep(R * 1.1, 0.0, abs(f.x)), 0.0)))
@@ -283,8 +305,19 @@ float sdWhale(vec3 p, float R, float L, float wave, float gape) {
 
   // Ventral pleats. A silhouette this smooth reads as a submarine without them,
   // and in a lunge they are the whole point — they are what is unfolding.
-  float pleat = sin(p.z * (7.0 / R)) * (0.010 + gape * 0.030) * R
-              * smoothstep(0.1, 0.75, t) * smoothstep(0.0, -0.4, p.y);
+  /*
+   * The ventral grooves, at twice the depth and reaching further round.
+   *
+   * These are the most beautiful thing about a rorqual at close range — fifty
+   * or so parallel furrows running from the chin to the navel — and they were
+   * set at one per cent of the girth, which is invisible at any distance. The
+   * gradient of the term stays well under one so the distance field is still
+   * safe to trace; what changes is that the light now has something to catch
+   * on, and the underside of the animal reads as pleated skin instead of as a
+   * smooth belly.
+   */
+  float pleat = sin(p.z * (7.0 / R)) * (0.024 + gape * 0.030) * R
+              * smoothstep(0.05, 0.75, t) * smoothstep(0.15 * R, -0.4 * R, p.y);
   return d + pleat;
 }
 
@@ -340,17 +373,36 @@ bool march(vec3 ro, vec3 rd, vec3 c, float R, float L, float wave, float gape, m
   vec3 ld = att * rd;
   vec2 b = hitBound(lo, ld, R, L);
   if (b.y < b.x || b.y < 0.0) return false;
+  /*
+   * The step floor and the hit threshold are fractions of the *girth*, not
+   * absolute distances, and that is the whole of a bug that only appeared once
+   * the animal came close.
+   *
+   * At 0.02 world units a ray grazing a body that fills half the frame takes
+   * hundreds of ever-smaller steps along the flank and runs out of iterations
+   * before it ever gets under the threshold. The tracer then reports a *miss*
+   * with a tiny closest approach — which the edge feather below reads as full
+   * coverage and paints with a flat rim colour. The result is a pale wedge
+   * with a staircase along its boundary, sitting exactly where the animal
+   * should be: the jagged blob in the captures was never a shading problem, it
+   * was every one of those pixels failing to converge.
+   *
+   * Scaled to the body, the step count needed is the same whether the whale is
+   * forty units away or a hundred, which is what it should have been from the
+   * start.
+   */
   float t = max(b.x, 0.1);
   float nearest = 1e9;
-  for (int i = 0; i < 52; i++) {
+  float eps = R * 0.012;
+  for (int i = 0; i < 80; i++) {
     vec3 q = lo + ld * t;
     float d = sdWhale(q, R, L, wave, gape);
     nearest = min(nearest, d);
-    if (d < 0.02) {
+    if (d < eps) {
       coverage = 1.0;
       tHit = t;
       lp = q;
-      vec2 e = vec2(0.05, 0.0);
+      vec2 e = vec2(max(0.03, R * 0.025), 0.0);
       vec3 n = normalize(vec3(
         sdWhale(q + e.xyy, R, L, wave, gape) - sdWhale(q - e.xyy, R, L, wave, gape),
         sdWhale(q + e.yxy, R, L, wave, gape) - sdWhale(q - e.yxy, R, L, wave, gape),
@@ -359,12 +411,15 @@ bool march(vec3 ro, vec3 rd, vec3 c, float R, float L, float wave, float gape, m
       nrm = transpose(att) * n;
       return true;
     }
-    t += max(d * 0.7, 0.05);
+    t += max(d * 0.75, R * 0.010);
     if (t > b.y) break;
   }
   // A near miss is the edge of the animal. The width is a fraction of the
   // girth, so it scales with the body rather than with the screen.
-  coverage = 1.0 - smoothstep(0.0, R * 0.055, nearest);
+  // A genuine near miss only. Anything closer than the hit threshold that got
+  // here ran out of iterations rather than passing the body by, and letting it
+  // count as full coverage is what filled the silhouette with flat colour.
+  coverage = (1.0 - smoothstep(eps, R * 0.055, nearest)) * 0.9;
   return false;
 }
 
@@ -383,7 +438,18 @@ vec3 shade(vec3 p, vec3 lp, vec3 n, vec3 rd, vec3 tint, float mass, float flash,
   // glancing angle, so a soft rim floods the flank instead of edging it.
   float fres = pow(1.0 - abs(dot(n, rd)), 5.0);
 
+  /*
+   * Three scales of skin, because the body is now seen from forty units as
+   * well as from a hundred.
+   *
+   * Every frequency here was low: the coarsest mottle has features thirteen
+   * units across on a flank seven units wide, so close up the whole animal
+   * came out as one flat tone — a smooth pale balloon with no surface on it at
+   * all. A body needs detail at the scale you are looking at it, and the grain
+   * is what the eye reads as *skin* rather than as a shaded solid.
+   */
   float mottle = fbm(p * 0.075);
+  float grain = fbm(p * 3.10 + 7.0) - 0.5;
   float scars = smoothstep(0.56, 0.74, fbm(p * 0.30 + 11.0));
   float barnacle = smoothstep(0.68, 0.88, fbm(p * 1.10 + 31.0));
   /*
@@ -394,7 +460,7 @@ vec3 shade(vec3 p, vec3 lp, vec3 n, vec3 rd, vec3 tint, float mass, float flash,
    * body must not look like. They are an accent on an animal, not its
    * material.
    */
-  float skin = 0.048 + mottle * 0.045 + scars * 0.085 + barnacle * 0.06;
+  float skin = 0.048 + mottle * 0.045 + scars * 0.085 + barnacle * 0.06 + grain * 0.034;
 
   /*
    * The white right jaw.
@@ -410,6 +476,17 @@ vec3 shade(vec3 p, vec3 lp, vec3 n, vec3 rd, vec3 tint, float mass, float flash,
   skin += jaw * 0.42;
 
   /*
+   * The eye. It is small, it is where a rorqual's is — just above and behind
+   * the corner of the mouth — and it is the only part of this animal that is
+   * *black on purpose*. A body with an eye is looked at differently from a
+   * body without one, and the whole design of the reveal is that the lamp
+   * eventually lands on the head; when it does, this is what it finds.
+   */
+  vec3 eyeAt = vec3(L * 0.53, -R * 0.30, R * 0.60);
+  float eye = 1.0 - smoothstep(R * 0.05, R * 0.11, length(lp - eyeAt));
+  skin *= 1.0 - eye * 0.92;
+
+  /*
    * Countershading, which is the strongest identification cue a marine animal
    * has and costs one smoothstep: dark along the back, pale underneath. Every
    * animal that swims in open water is painted this way, because it is what
@@ -423,12 +500,56 @@ vec3 shade(vec3 p, vec3 lp, vec3 n, vec3 rd, vec3 tint, float mass, float flash,
   vec3 toLight = uLight.xyz - p;
   float dist = length(toLight);
   float lambert = max(dot(n, toLight / dist), 0.0);
-  // A tenth per unit: at thirty units from the source there is a twentieth of
-  // the light left. That severity is what lights a patch of an animal rather
-  // than an animal.
-  float lit = uLight.w * lambert * exp(-dist * 0.075);
+  /*
+   * 0.13 per unit, not 0.075 — and this is what a lamp anchored to the animal
+   * costs.
+   *
+   * While the lamp wandered the world it was rarely near the body and the
+   * falloff barely mattered. Put it on the animal (which is the fix that made
+   * the whale visible at all) and 0.075 lights everything: across a body forty
+   * units long the near end and the far end differ by less than four to one,
+   * so the entire whale came up at once, evenly, with no gradient anywhere —
+   * and a surface with no gradient has no form. §2's reveal was gone in the
+   * same stroke that made the animal present.
+   *
+   * At 0.13 the same span is a factor of thirteen. The patch has an inside and
+   * an outside again, the roll of the flank is legible inside it, and the
+   * intensity is raised to pay for the light being thrown away.
+   */
+  float lit = uLight.w * lambert * exp(-dist * 0.13);
+  // Heavier is darker (plan §6): the wall that matters most takes the most
+  // light out of the picture, rather than announcing itself with more of it.
+  lit *= mix(1.0, 0.62, mass);
 
-  vec3 col = tint * skin * lit * 1.7;
+  /*
+   * 26, and the number matters less than what it is against.
+   *
+   * The lit patch was worth about 0.02 and the rim below was worth 0.18, so
+   * the animal was being *drawn by its own silhouette*: every grazing surface
+   * glowed, the flukes and the flank came out as outlines with nothing inside
+   * them, and the result read first as a pale slab and then, once the lamp was
+   * tightened, as an X-ray. Neither is a whale.
+   *
+   * The right relation is the one a torch in dark water actually gives: the
+   * lit part is by far the brightest thing on the body, the rim is a thin
+   * edge, and everything outside the patch is black. So the patch is worth
+   * about a quarter — bright, and still under the bloom threshold of 0.48, so
+   * the animal never blooms and the water still does.
+   */
+  /*
+   * 26, softly clamped.
+   *
+   * The lit patch has to be by far the brightest thing on the body — it was
+   * worth a fiftieth of the rim, which is why the animal came out as an
+   * outline with nothing inside it — but it must never cross the bloom
+   * threshold of 0.48, because a whale that blooms is a lamp, and the only
+   * things allowed to glow in this ocean are strained water and the creatures
+   * that live in it. The rolloff holds the brightest skin just under a third
+   * however close the lamp gets, so approaching the glass cannot wash the
+   * animal out.
+   */
+  float body = skin * lit * 26.0;
+  vec3 col = tint * (body / (1.0 + body * 2.6));
   /*
    * One narrow specular. Almost the entire visual difference between wet skin
    * and stone is the width of the highlight: a broad one is rock, a tight one
@@ -436,13 +557,20 @@ vec3 shade(vec3 p, vec3 lp, vec3 n, vec3 rd, vec3 tint, float mass, float flash,
    * than toward the body, because a reflection is the colour of the *light*.
    */
   vec3 hv = normalize(normalize(toLight) - rd);
-  col += mix(tint, vec3(1.0), 0.6) * pow(max(dot(n, hv), 0.0), 64.0) * lit * 0.9;
-  col += tint * fres * (0.075 + mass * 0.115 + flash * 0.8);
+  col += mix(tint, vec3(1.0), 0.6) * pow(max(dot(n, hv), 0.0), 64.0) * lit * 4.0;
+  // Roughly halved: a rim is an edge, not a surface treatment. At the old
+  // weight it was seven times the lit skin, which is why the body had a bright
+  // contour and nothing inside it.
+  col += tint * fres * (0.045 + mass * 0.055 + flash * 0.6);
   // A trace of scattering through the near surface: without it the unlit body
   // is pure black inside a bright contour, and a bright contour around nothing
   // is an *outline*, which would make this a drawing of a whale.
   float inner = pow(1.0 - abs(dot(n, rd)), 2.0);
-  col += tint * inner * (0.016 + mass * 0.024);
+  // Halved. It is meant to keep the unlit body off pure black so that the rim
+  // is not an outline; at the old strength it was a flat glow over every
+  // grazing surface, which on a body filling half the frame is most of it —
+  // the milky slab in the captures was largely this term.
+  col += tint * inner * (0.009 + mass * 0.011);
   col += tint * flash * lambert * 0.5;
   // The distended throat catches what little light there is, because it is
   // stretched taut and pointing down at the field it is swallowing.
@@ -578,6 +706,7 @@ export function createWhales(): Whales {
     gape: 0,
     boost: 0,
     near: 0,
+    effort: 0,
     ascend: 0,
     cruise: 0,
     stroke: 0,
@@ -622,6 +751,16 @@ export function createWhales(): Whales {
     );
   }
 
+  /** The other end, which is the end that does the work. */
+  function tailAt(out: THREE.Vector3): THREE.Vector3 {
+    const L = 15 + state.mass * 15;
+    return out.set(
+      state.cruise - Math.cos(YAW + Math.PI * turnEase()) * L * 1.0,
+      state.y,
+      0,
+    );
+  }
+
   /*
    * The backdrop quad has to cover the frustum, and it has to keep covering it.
    *
@@ -661,6 +800,10 @@ export function createWhales(): Whales {
     },
 
     mouth: (out) => mouthAt(out),
+
+    tail: (out) => tailAt(out),
+
+    headingX: () => Math.cos(YAW + Math.PI * turnEase()),
 
     fit(camera) {
       fitTo(camera);
@@ -865,6 +1008,7 @@ export function createWhales(): Whales {
        * a tail that stopped there would look like the animal had been paused.
        */
       const effort = Math.max(0, Math.min(1, (speed - 0.85) / 1.6));
+      state.effort = effort;
       const hz = 0.20 + effort * 0.40;
       state.stroke = (state.stroke + hz * 2 * Math.PI * dt) % (2 * Math.PI);
 
@@ -894,9 +1038,20 @@ export function createWhales(): Whales {
       // own depth range (-11 to +7 is the field's box, and the veil between
       // them is what says "water"), which would put a whale in front of the
       // water it is supposed to be swimming in.
+      /*
+       * Further off while it is only swimming, and the lunge is what closes it.
+       *
+       * At -64 with a heavy book the body sat at about -52, where it fills the
+       * frame permanently — and a whale that is always enormous has nowhere to
+       * go when it charges, which is the same mistake the tail beat made
+       * before it was given a reserve. Held back to about -68 at cruise, the
+       * approach is worth thirty units of looming rather than fourteen, and
+       * the difference between "it is down there" and "it is coming" is a
+       * difference you can see.
+       */
       depth = Math.min(-38,
-        -64 - state.distance * 34 + state.mass * 12 + state.ascend * 20 - lane * 8
-        + state.near * 34);
+        -78 - state.distance * 34 + state.mass * 10 + state.ascend * 20 - lane * 8
+        + state.near * 40);
       u.uBody.value.set(state.y + state.ascend * 9, depth, state.mass, state.flash);
       u.uMotion.value.set(state.cruise, state.gape, state.warm, state.ascend);
       u.uSwim.value.set(Math.PI * turnEase(), bank, state.stroke, effort);

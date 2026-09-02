@@ -173,6 +173,8 @@ function lunge(x: number, y: number, side: number, power: number, leviathan: boo
 const water = new THREE.Vector2();
 const screen = new THREE.Vector2();
 const mouthWhale = new THREE.Vector3();
+const tailWhale = new THREE.Vector3();
+const tailWater = new THREE.Vector2();
 const bodyWater = new THREE.Vector2();
 
 /**
@@ -402,6 +404,53 @@ function step(dt: number): void {
   toWater(ws.cruise, ws.y, depth, stage.camera, bodyWater);
   if (ws.mass >= 0.03) {
     shoal.scatter(bodyWater.x, bodyWater.y, frame.halfWidth * 0.9, 34 * ws.mass * dt);
+  }
+
+  /*
+   * The animal in the water, at last.
+   *
+   * Every impulse in this piece was an event — a print lands, the field is
+   * hit, the hit fades — and nothing at all was driven by the plain fact that
+   * a body longer than the frame is crossing it. So the whale swam and the
+   * krill were unaware of it, which is exactly what "the whale and the water
+   * do not fit together" looks like from the outside.
+   *
+   * Two standing forcings (scene/fluid.ts), both taken from the animal's own
+   * geometry rather than from numbers chosen here:
+   *
+   *   the head   pushes forward along the heading, hard when it is charging.
+   *              The krill part ahead of it.
+   *   the flukes push *sideways, alternating with the stroke*. The field's
+   *              vorticity confinement answers by shedding a vortex on each
+   *              beat, left then right, and the wake trails behind the body
+   *              for the six seconds the water remembers. That street is not
+   *              authored anywhere: it is what a beating tail does to water,
+   *              and it is the strongest evidence in the frame that the animal
+   *              is in the same ocean as the plankton.
+   */
+  if (ws.mass >= 0.03) {
+    whales.tail(tailWhale);
+    toWater(tailWhale.x, tailWhale.y, depth, stage.camera, tailWater);
+    const hx = water.x - tailWater.x;
+    const hy = water.y - tailWater.y;
+    const h = Math.hypot(hx, hy) || 1;
+    const ux = hx / h;
+    const uy = hy / h;
+    const reach = mouthRadius(0.5);
+
+    // Steady state is roughly six times the push (the water's decay constant),
+    // so these are small numbers on purpose: a cruising animal should stir the
+    // field, not blow it apart.
+    const bow = (0.22 + ws.effort * 1.05) * (0.4 + ws.mass);
+    fluid.setSwimmer(0, water.x, water.y, reach * 1.15, ux * bow, uy * bow, 0, 1);
+
+    const beat = Math.sin(ws.stroke);
+    const swat = beat * (0.45 + ws.effort * 2.1) * (0.4 + ws.mass);
+    fluid.setSwimmer(1, tailWater.x, tailWater.y, reach * 0.95,
+      -uy * swat, ux * swat, beat * (0.6 + ws.effort * 2.4), 1);
+  } else {
+    fluid.setSwimmer(0, 0, 0, 1, 0, 0, 0, 0);
+    fluid.setSwimmer(1, 0, 0, 1, 0, 0, 0, 0);
   }
 
   /*

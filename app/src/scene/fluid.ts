@@ -64,6 +64,17 @@ export interface Fluid {
   min: THREE.Vector2;
   size: THREE.Vector2;
   add: (i: Impulse) => void;
+  /**
+   * The swimmer: a *standing* forcing, refreshed every frame rather than
+   * decaying like an impulse. Two of them — the head and the flukes — which is
+   * how a body that swims through water gets to move the water it swims
+   * through (see the shader).
+   */
+  setSwimmer: (
+    i: 0 | 1,
+    x: number, y: number, radius: number,
+    dx: number, dy: number, spin: number, strength: number,
+  ) => void;
   setExtent: (halfWidth: number, halfHeight: number) => void;
   update: (dt: number, time: number, agitation: number) => void;
   dispose: () => void;
@@ -77,6 +88,8 @@ uniform vec2 uMin;
 uniform vec2 uSize;
 uniform vec4 uImpulse[${MAX_IMPULSES}];  // xy world position, z strength, w radius
 uniform vec4 uImpulseDir[${MAX_IMPULSES}]; // xy direction, z spin, w radial
+uniform vec4 uSwimmer[2];     // xy world position, z radius, w strength
+uniform vec4 uSwimmerDir[2];  // xy push, z spin, w unused
 
 /*
  * Simplex-ish value noise. Cheap on purpose: it is only used to keep the field
@@ -183,6 +196,40 @@ void main() {
     dye += fall * imp.z * uDt * 0.25;
   }
 
+  /*
+   * The animal, continuously.
+   *
+   * Everything above is an *event*: a print lands, the water is hit, the hit
+   * decays. Nothing here was ever driven by the fact that a body a hundred
+   * units long is crossing the frame — so the whale swam and the krill did not
+   * notice, which is the whole of "the whale and the water do not fit
+   * together". A body in water pushes water at all times, and it does it in
+   * two places for two different reasons.
+   *
+   * The head is a bow: it shoulders the water aside, and the faster it goes
+   * the harder. That is what makes the krill part in front of it.
+   *
+   * The flukes are the interesting one. The push there is *lateral and it
+   * alternates with the stroke*, which is what a tail actually does, and a
+   * field with vorticity confinement in it answers by shedding a vortex on
+   * each beat — one to the left, one to the right, trailing behind the animal.
+   * Nobody authored that wake; it is the same physics that puts one behind a
+   * real fish, and it means the tail beat is now visible in the water long
+   * after the animal has gone past.
+   */
+  for (int i = 0; i < 2; i++) {
+    vec4 sw = uSwimmer[i];
+    if (sw.w <= 0.0) continue;
+    vec2 d = world - sw.xy;
+    float r = length(d) + 1e-4;
+    float fall = exp(-(r * r) / (sw.z * sw.z));
+    vec4 dir = uSwimmerDir[i];
+    vec2 radial = d / r;
+    vec2 tangent = vec2(-radial.y, radial.x);
+    v += (dir.xy + tangent * dir.z) * sw.w * fall * uDt;
+    dye += fall * sw.w * uDt * 0.05;
+  }
+
   // The walls. Velocity is faded to nothing over the outer eighth of the field
   // so nothing accumulates against the edge, which would read as a container —
   // and the one thing this space must not have is a container (plan §1).
@@ -235,6 +282,8 @@ export function createFluid(renderer: THREE.WebGLRenderer): Fluid {
   uniforms.uImpulseDir = {
     value: Array.from({ length: MAX_IMPULSES }, () => new THREE.Vector4()),
   };
+  uniforms.uSwimmer = { value: [new THREE.Vector4(), new THREE.Vector4()] };
+  uniforms.uSwimmerDir = { value: [new THREE.Vector4(), new THREE.Vector4()] };
 
   const error = gpu.init();
   if (error) console.error('[fluid]', error);
@@ -253,6 +302,11 @@ export function createFluid(renderer: THREE.WebGLRenderer): Fluid {
       // tail of an old fish, and the old one's energy is already in the field.
       if (active.length >= MAX_IMPULSES) active.shift();
       active.push(i);
+    },
+
+    setSwimmer(i, x, y, radius, dx, dy, spin, strength) {
+      (uniforms.uSwimmer.value as THREE.Vector4[])[i].set(x, y, radius, strength);
+      (uniforms.uSwimmerDir.value as THREE.Vector4[])[i].set(dx, dy, spin, 0);
     },
 
     setExtent(halfWidth, halfHeight) {
