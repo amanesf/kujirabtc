@@ -52,6 +52,8 @@ export interface WhaleState {
   gape: number;
   /** Multiplier on cruise speed, eased. Positive is a charge, negative a brake. */
   boost: number;
+  /** 0..1 how far the lunge has brought it toward the glass. Eased. */
+  near: number;
   /** 0..1: the rare ascent (plan §3). */
   ascend: number;
   /** Where along its own track it presently is, world units. */
@@ -99,6 +101,8 @@ export interface Whales {
   setOnEngulf: (fn: (mouth: THREE.Vector3, power: number) => void) => void;
   /** The mouth's present position, in the animal's own space. */
   mouth: (out: THREE.Vector3) => THREE.Vector3;
+  /** The body's present girth, in world units. Sizes the mouth's reach. */
+  girth: () => number;
   update: (dt: number, time: number, camera: THREE.PerspectiveCamera) => void;
   setLight: (x: number, y: number, z: number, strength: number) => void;
   setBoundary: (y: number) => void;
@@ -573,6 +577,7 @@ export function createWhales(): Whales {
     lunge: 0,
     gape: 0,
     boost: 0,
+    near: 0,
     ascend: 0,
     cruise: 0,
     stroke: 0,
@@ -637,6 +642,7 @@ export function createWhales(): Whales {
     mesh,
     state,
     depth: () => depth,
+    girth: () => 1.6 + state.mass * 2.0,
 
     beginLunge(p) {
       // A second call during a run is a bigger appetite, not a second animal:
@@ -764,6 +770,31 @@ export function createWhales(): Whales {
        * takes a third of one, and coming back to cruise takes four: the charge
        * is effort, the stop is an impact, and the recovery is exhaustion.
        */
+      /*
+       * It comes at you to feed.
+       *
+       * Everything else about the lunge was in the plane of the picture — the
+       * charge, the brake, the jaw — and the one axis that was doing nothing
+       * is the one the frame is weakest on. A body that only ever holds its
+       * depth is a body on a rail; a body that closes thirty units while it
+       * charges fills the frame, loses a third of the veil that hides it, and
+       * makes the event happen *to the viewer* rather than in front of them.
+       *
+       * It never arrives. The near limit is thirty-eight units out, which at
+       * this field of view still puts a fifty-unit animal well past both edges
+       * of the frame — §6's rule that the whole body is never seen is not
+       * negotiable, and coming closer is precisely what makes the rule bite:
+       * near enough to fill the picture, so large that less of it fits.
+       *
+       * Approach is quick (the charge) and withdrawal is slow (the recovery),
+       * the same asymmetry as everything else here.
+       */
+      const nearWant = state.phase === 'run' ? 0.55
+                     : state.phase === 'engulf' ? 1
+                     : state.phase === 'aim' ? 0.15 : 0;
+      state.near += (nearWant - state.near)
+                  * (1 - Math.exp(-dt / (nearWant > state.near ? 1.6 : 5.0)));
+
       const boostTau = boostWant > state.boost
         ? (state.phase === 'run' ? 1.5 : 1.0)
         : (state.phase === 'engulf' ? 0.32 : 4.0);
@@ -859,7 +890,13 @@ export function createWhales(): Whales {
       // about a hundred and thirty units — far enough that the veil took nearly
       // all of it and the animal was, for minutes at a time, simply not there.
       // Closer, and over a shorter range: still unreachable, but present.
-      depth = -64 - state.distance * 34 + state.mass * 12 + state.ascend * 20 - lane * 8;
+      // Clamped at -38: nearer than that and the body crosses into the krill's
+      // own depth range (-11 to +7 is the field's box, and the veil between
+      // them is what says "water"), which would put a whale in front of the
+      // water it is supposed to be swimming in.
+      depth = Math.min(-38,
+        -64 - state.distance * 34 + state.mass * 12 + state.ascend * 20 - lane * 8
+        + state.near * 34);
       u.uBody.value.set(state.y + state.ascend * 9, depth, state.mass, state.flash);
       u.uMotion.value.set(state.cruise, state.gape, state.warm, state.ascend);
       u.uSwim.value.set(Math.PI * turnEase(), bank, state.stroke, effort);

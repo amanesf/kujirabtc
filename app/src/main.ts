@@ -4,7 +4,7 @@ import { createStage, fieldResolution } from './core/renderer';
 import { createFrame, WORLD_HEIGHT } from './core/frame';
 import { createPostFx } from './core/postFx';
 import { createObserver } from './core/observer';
-import { toNdc, toWater } from './core/space';
+import { toNdc, toWater, waterScale } from './core/space';
 import { createFluid } from './scene/fluid';
 import { createField } from './scene/field';
 import { createWhales } from './scene/whale';
@@ -175,9 +175,18 @@ const screen = new THREE.Vector2();
 const mouthWhale = new THREE.Vector3();
 const bodyWater = new THREE.Vector2();
 
-/** How wide the mouth's influence is, in the water's own units. */
+/**
+ * How wide the mouth's reach is, in the water's own units.
+ *
+ * Taken from the animal rather than from the frame: two and a half girths,
+ * carried into the water by the same perspective that carries the mouth's
+ * position. So when the lunge brings the body thirty units closer the reach
+ * grows with it — which is the whole point of coming closer, and a constant
+ * fraction of the frame would have thrown it away.
+ */
 function mouthRadius(power: number): number {
-  return frame.halfWidth * (0.42 + power * 0.30);
+  const r = whales.girth() * 2.5 * waterScale(whales.depth(), stage.camera);
+  return Math.max(1.2, r * (0.85 + power * 0.35));
 }
 
 /*

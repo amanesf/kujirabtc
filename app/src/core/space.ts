@@ -70,3 +70,14 @@ export function toWater(
 export function halfWidthAt(z: number, camera: THREE.PerspectiveCamera): number {
   return Math.tan((camera.fov * Math.PI) / 360) * Math.abs(camera.position.z - z) * camera.aspect;
 }
+
+/**
+ * How much a length in a plane at `z` shrinks when carried into the water at
+ * z = 0 — the ratio of the two planes' distances from the camera. A head two
+ * girths across at seventy units out covers less water than the same head at
+ * forty, and the mouth's reach has to follow that or a lunge that comes closer
+ * would inhale exactly as little as one that stayed away.
+ */
+export function waterScale(z: number, camera: THREE.PerspectiveCamera): number {
+  return camera.position.z / (camera.position.z - z);
+}
