@@ -15,17 +15,31 @@ import * as THREE from 'three';
  *     slightly different amounts. Real gravitational lensing is achromatic —
  *     this is a lie, and it is the lie that makes the effect read as *optics*
  *     rather than as a distortion filter.
- *  2. the shock rings from whale prints: a thin annulus of radial displacement
- *     that expands and thins. Fast — a fifth of a second to cross the frame,
- *     against six seconds for the vortex it leaves behind in the fluid. The
- *     same event at three speeds is what makes it read as physics (plan §7).
- *  3. absorption, vignette and grain — the veil. The grain is not nostalgia;
+ *  2. absorption, vignette and grain — the veil. The grain is not nostalgia;
  *     a perfectly clean frame reads as CG, and the noise floor is what makes
  *     the eye accept it as something that was *captured*.
  */
 
 export const MAX_LENSES = 2;
-export const MAX_SHOCKS = 4;
+
+/*
+ * There was a third thing here: a shock ring fired on every whale print — an
+ * annulus of displacement plus a bright front, crossing the frame in a fifth
+ * of a second. It is gone, and so is the flash on the animal's flank that went
+ * with it.
+ *
+ * Both were justified by plan §7 — one event delivered at three speeds — and
+ * the argument is sound about *slow* things and wrong about fast ones. In a
+ * picture whose every other motion is measured in seconds, a bright ring that
+ * appears and vanishes within a third of a second does not read as physics; it
+ * reads as an effect layer, the frame flinching in a way nothing in the water
+ * accounts for. Watched rather than reasoned about, it was simply unpleasant.
+ *
+ * What is left is the slow half, which was always the good half: the vortex
+ * drawn in the fluid, taking seven seconds to wind a hundred thousand bodies
+ * into a mouth. An event that takes seven seconds to finish is felt for seven
+ * seconds. One that takes a fifth of one is a glitch.
+ */
 
 export const AbyssShader = {
   uniforms: {
@@ -34,8 +48,6 @@ export const AbyssShader = {
     uAspect: { value: 1 },
     /** xy in NDC, z strength, w radius. */
     uLens: { value: Array.from({ length: MAX_LENSES }, () => new THREE.Vector4()) },
-    /** xy in NDC, z ring radius, w strength. */
-    uShock: { value: Array.from({ length: MAX_SHOCKS }, () => new THREE.Vector4()) },
     uExposure: { value: 1 },
   },
   vertexShader: /* glsl */ `
@@ -51,7 +63,6 @@ export const AbyssShader = {
     uniform float uAspect;
     uniform float uExposure;
     uniform vec4 uLens[${MAX_LENSES}];
-    uniform vec4 uShock[${MAX_SHOCKS}];
     varying vec2 vUv;
 
     /**
@@ -77,18 +88,6 @@ export const AbyssShader = {
          */
         float core = lens.w * 0.55;
         d += normalize(toC) * lens.z * k * (r / (r * r + core * core));
-      }
-
-      for (int i = 0; i < ${MAX_SHOCKS}; i++) {
-        vec4 s = uShock[i];
-        if (s.w <= 0.0) continue;
-        vec2 toC = sp - s.xy;
-        float r = length(toC) + 1e-4;
-        // A thin ring that thins further as it grows, so the front stays sharp
-        // while the energy behind it spreads out and dies.
-        float width = 0.035 + s.z * 0.10;
-        float ring = exp(-pow((r - s.z) / width, 2.0));
-        d += normalize(toC) * ring * s.w * k * 0.055;
       }
 
       /*
@@ -146,17 +145,6 @@ export const AbyssShader = {
         if (lens.z <= 0.0) continue;
         float d = length(sp - lens.xy);
         col *= 1.0 - 2.6 * lens.z * exp(-(d * d) / (lens.w * lens.w));
-      }
-
-      // The bright edge of each shock front. Separate from the displacement so
-      // it can be a hair ahead of it — light outruns water.
-      for (int i = 0; i < ${MAX_SHOCKS}; i++) {
-        vec4 s = uShock[i];
-        if (s.w <= 0.0) continue;
-        float d = length(sp - s.xy);
-        float width = 0.030 + s.z * 0.09;
-        float ring = exp(-pow((d - s.z * 1.04) / width, 2.0));
-        col += vec3(0.62, 0.86, 1.0) * ring * s.w * 0.16;
       }
 
       col *= uExposure;

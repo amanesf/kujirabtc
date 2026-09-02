@@ -259,11 +259,15 @@ export function createShoal(): Shoal {
         const d2 = dx * dx + dy * dy;
         if (d2 > r2) continue;
         const d = Math.sqrt(d2) + 1e-4;
-        f.vel.x += (dx / d) * 9;
-        f.vel.y += (dy / d) * 9;
-        f.flare = 1;
-        f.life = Math.min(f.life, 0.3);
-        f.span = Math.max(f.span, 0.3);
+        // Drawn in rather than snatched: a nine-unit kick over a third of a
+        // second is a jump cut, and the flare that went with it was one more
+        // thing blinking on a frame. They turn toward the mouth, dim as they
+        // reach it, and are gone.
+        f.vel.x += (dx / d) * 3.5;
+        f.vel.y += (dy / d) * 3.5;
+        f.flare = Math.max(f.flare, 0.55);
+        f.life = Math.min(f.life, 0.55);
+        f.span = Math.max(f.span, 0.55);
       }
     },
 
@@ -276,7 +280,7 @@ export function createShoal(): Shoal {
           pool.splice(i, 1);
           continue;
         }
-        f.flare = Math.max(0, f.flare - dt / 0.3);
+        f.flare = Math.max(0, f.flare - dt / 0.55);
         f.pos.addScaledVector(f.vel, dt);
         // They coast rather than stopping dead, so the school stretches out and
         // the light goes out from the back.
@@ -312,7 +316,7 @@ export function createShoal(): Shoal {
         // instant appearance is a pop, and a pop is the one thing a picture
         // about stillness cannot afford.
         shapes[n * 4 + 2] = (0.5 + f.power * 1.25) * Math.min(1, (1 - k) * 6) * k * k
-                          + f.flare * f.flare * 3.0;
+                          + f.flare * f.flare * 0.8;
         shapes[n * 4 + 3] = f.warm;
         beats[n * 2 + 0] = f.phase + time * f.beat;
         // The beat deepens with speed: a fish holding station barely moves, one

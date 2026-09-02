@@ -264,9 +264,19 @@ void main() {
    * The edge is soft, so what is seen is a shadow drawing itself over the
    * swarm as the mouth arrives rather than a disc switching off.
    */
-  float swallowed = uMouth.w * exp(-dot(vWorld.xy - uMouth.xy, vWorld.xy - uMouth.xy)
-                                   / max(uMouth.z * uMouth.z, 1e-4));
-  lum *= 1.0 - 0.92 * clamp(swallowed, 0.0, 1.0);
+  /*
+   * A jaw has an edge, and a gaussian does not.
+   *
+   * The first version faded the krill out over a soft bell, which at these
+   * densities is not a mouth closing on them — it is a dim patch, and the
+   * honest report from watching it was that nothing looked eaten. What is
+   * wanted is a *boundary*: krill outside it are lit and streaming inward,
+   * krill inside it are gone. The transition is a fifth of the radius, wide
+   * enough not to alias and narrow enough to be a rim rather than a haze, and
+   * it scales with the gape so the closed mouth takes nothing at all.
+   */
+  float inMouth = 1.0 - smoothstep(uMouth.z * 0.80, uMouth.z, length(vWorld.xy - uMouth.xy));
+  lum *= 1.0 - 0.98 * inMouth * smoothstep(0.15, 0.65, uMouth.w);
 
   gl_FragColor = vec4(tint * lum * uExposure * core * vFade, 1.0);
 }

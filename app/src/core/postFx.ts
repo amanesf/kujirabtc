@@ -4,7 +4,7 @@ import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
-import { AbyssShader, MAX_LENSES, MAX_SHOCKS } from '../effects/abyss';
+import { AbyssShader, MAX_LENSES } from '../effects/abyss';
 
 /**
  * The chain:
@@ -25,14 +25,6 @@ export interface Lens {
   radius: number;
 }
 
-export interface Shock {
-  x: number;
-  y: number;
-  /** Seconds since it went off. */
-  age: number;
-  power: number;
-}
-
 export interface PostFx {
   render: () => void;
   setSize: (w: number, h: number, aspect: number) => void;
@@ -40,7 +32,6 @@ export interface PostFx {
   /** A whole-frame lever, driven by the market (main.ts). */
   setExposure: (e: number) => void;
   lenses: Lens[];
-  shocks: Shock[];
   dispose: () => void;
 }
 
@@ -87,11 +78,9 @@ export function createPostFx(
   composer.addPass(abyss);
 
   const lenses: Lens[] = [];
-  const shocks: Shock[] = [];
 
   return {
     lenses,
-    shocks,
 
     setSize(w, h, aspect) {
       composer.setSize(w, h);
@@ -113,21 +102,6 @@ export function createPostFx(
         const l = lenses[i];
         if (l) lensU[i].set(l.x, l.y, l.strength, l.radius);
         else lensU[i].set(0, 0, 0, 1);
-      }
-      const shockU = abyss.uniforms.uShock.value as THREE.Vector4[];
-      for (let i = 0; i < MAX_SHOCKS; i++) {
-        const s = shocks[i];
-        if (!s) {
-          shockU[i].set(0, 0, 0, 0);
-          continue;
-        }
-        // The front travels at about one screen-height every 0.45s and the
-        // amplitude falls off as the square of what is left, so the ring is
-        // gone before it reaches the corners — a shock that hit the edge of the
-        // frame would tell you where the edge is, and the frame has no edges.
-        const radius = s.age * 2.2;
-        const fade = Math.max(0, 1 - s.age / 0.95);
-        shockU[i].set(s.x, s.y, radius, s.power * fade * fade);
       }
       composer.render();
     },

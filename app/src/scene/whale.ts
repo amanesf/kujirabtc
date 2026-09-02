@@ -310,13 +310,14 @@ float sdWhale(vec3 p, float R, float L, float wave, float gape) {
    *
    * These are the most beautiful thing about a rorqual at close range — fifty
    * or so parallel furrows running from the chin to the navel — and they were
-   * set at one per cent of the girth, which is invisible at any distance. The
-   * gradient of the term stays well under one so the distance field is still
-   * safe to trace; what changes is that the light now has something to catch
-   * on, and the underside of the animal reads as pleated skin instead of as a
-   * smooth belly.
+   * one per cent of the girth at seven cycles across it, which is invisible at
+   * a distance and, once the animal came close, a set of wide bands like a
+   * beach ball. Twenty cycles is the right count for the animal; the amplitude
+   * comes down to match so that the product of the two — which is all the
+   * distance field cares about — stays a quarter, well inside what a sphere
+   * tracer will follow.
    */
-  float pleat = sin(p.z * (7.0 / R)) * (0.024 + gape * 0.030) * R
+  float pleat = sin(p.z * (20.0 / R)) * (0.011 + gape * 0.014) * R
               * smoothstep(0.05, 0.75, t) * smoothstep(0.15 * R, -0.4 * R, p.y);
   return d + pleat;
 }
@@ -393,8 +394,8 @@ bool march(vec3 ro, vec3 rd, vec3 c, float R, float L, float wave, float gape, m
    */
   float t = max(b.x, 0.1);
   float nearest = 1e9;
-  float eps = R * 0.012;
-  for (int i = 0; i < 80; i++) {
+  float eps = R * 0.016;
+  for (int i = 0; i < 100; i++) {
     vec3 q = lo + ld * t;
     float d = sdWhale(q, R, L, wave, gape);
     nearest = min(nearest, d);
@@ -548,8 +549,8 @@ vec3 shade(vec3 p, vec3 lp, vec3 n, vec3 rd, vec3 tint, float mass, float flash,
    * however close the lamp gets, so approaching the glass cannot wash the
    * animal out.
    */
-  float body = skin * lit * 26.0;
-  vec3 col = tint * (body / (1.0 + body * 2.6));
+  float body = skin * lit * 13.0;
+  vec3 col = tint * (body / (1.0 + body * 4.6));
   /*
    * One narrow specular. Almost the entire visual difference between wet skin
    * and stone is the width of the highlight: a broad one is rock, a tight one
@@ -557,11 +558,18 @@ vec3 shade(vec3 p, vec3 lp, vec3 n, vec3 rd, vec3 tint, float mass, float flash,
    * than toward the body, because a reflection is the colour of the *light*.
    */
   vec3 hv = normalize(normalize(toLight) - rd);
-  col += mix(tint, vec3(1.0), 0.6) * pow(max(dot(n, hv), 0.0), 64.0) * lit * 4.0;
-  // Roughly halved: a rim is an edge, not a surface treatment. At the old
-  // weight it was seven times the lit skin, which is why the body had a bright
-  // contour and nothing inside it.
-  col += tint * fres * (0.045 + mass * 0.055 + flash * 0.6);
+  col += mix(tint, vec3(1.0), 0.6) * pow(max(dot(n, hv), 0.0), 64.0) * lit * 0.7;
+  /*
+   * The rim carries the animal, and the lit skin only says what it is made of.
+   *
+   * There is a balance to find here and it has been wrong in both directions.
+   * All rim and no skin is an X-ray — a contour with nothing inside it. All
+   * skin and no rim is a lump of wet rock with a torch on it, which is
+   * accurate and completely unmysterious. What is wanted is the edge doing
+   * most of the describing, with just enough inside the lit patch to know that
+   * it is skin: a body you can see the *shape* of and cannot quite see.
+   */
+  col += tint * fres * (0.085 + mass * 0.090 + flash * 0.5);
   // A trace of scattering through the near surface: without it the unlit body
   // is pure black inside a bright contour, and a bright contour around nothing
   // is an *outline*, which would make this a drawing of a whale.
@@ -725,6 +733,26 @@ export function createWhales(): Whales {
     return Math.cos(Math.PI * turnEase());
   }
 
+  /*
+   * The attitude of the two legs, and the asymmetry that was in them.
+   *
+   * The turn added π to the yaw, which reverses the heading — and reverses the
+   * *depth* component with it. So one leg of the track was angled toward the
+   * viewer and the other was angled away: going one way the head was near and
+   * large and a lunge came out of the screen, going the other way the animal
+   * was pointed into the dark and the same lunge went away from you. Two
+   * different animals, alternating, and only one of them was the one the piece
+   * is about.
+   *
+   * Mirroring instead of rotating fixes it, and the reason is one identity:
+   * cos(π − a) = −cos a but −sin(π − a) = −sin a, so π − YAW has the opposite
+   * heading and the *same* attitude in depth. Both passes now carry the head
+   * toward the glass; only the direction along the track changes.
+   */
+  function yawNow(): number {
+    return YAW + (Math.PI - 2 * YAW) * turnEase();
+  }
+
   const mouthPos = new THREE.Vector3();
   let depth = -90;
   let power = 0.8;
@@ -745,7 +773,7 @@ export function createWhales(): Whales {
   function mouthAt(out: THREE.Vector3): THREE.Vector3 {
     const L = 15 + state.mass * 15;
     return out.set(
-      state.cruise + Math.cos(YAW + Math.PI * turnEase()) * L * 0.95,
+      state.cruise + Math.cos(yawNow()) * L * 0.95,
       state.y - 1.5,
       0,
     );
@@ -755,7 +783,7 @@ export function createWhales(): Whales {
   function tailAt(out: THREE.Vector3): THREE.Vector3 {
     const L = 15 + state.mass * 15;
     return out.set(
-      state.cruise - Math.cos(YAW + Math.PI * turnEase()) * L * 1.0,
+      state.cruise - Math.cos(yawNow()) * L * 1.0,
       state.y,
       0,
     );
@@ -803,7 +831,7 @@ export function createWhales(): Whales {
 
     tail: (out) => tailAt(out),
 
-    headingX: () => Math.cos(YAW + Math.PI * turnEase()),
+    headingX: () => Math.cos(yawNow()),
 
     fit(camera) {
       fitTo(camera);
@@ -883,7 +911,19 @@ export function createWhales(): Whales {
          * position makes the geometry of the event and the geometry of the
          * frame the same thing, and no clamp or special case is needed.
          */
-        if (Math.abs(state.cruise) < 3.5 || state.phaseT > 4.5) {
+        /*
+         * The *mouth* has to reach the middle, not the body's centre.
+         *
+         * The centre is what follows the track, and the head is most of a body
+         * length ahead of it along the yaw — twenty world units, which at the
+         * depth of a lunge is nearly twice the half-width of the frame. So
+         * firing when the centre crossed zero put the open jaws reliably off
+         * the right-hand edge, and the one moment the whole sequence exists
+         * for happened where nobody could see it. Everything that hangs off
+         * the mouth — the suction, the shadow the jaw casts over the krill,
+         * the fish that are taken — was landing out there with it.
+         */
+        if (Math.abs(mouthAt(mouthPos).x) < 4.0 || state.phaseT > 4.5) {
           state.phase = 'engulf';
           state.phaseT = 0;
           onEngulf(mouthAt(mouthPos), power);
@@ -1019,7 +1059,10 @@ export function createWhales(): Whales {
       state.gape += (gapeWant - state.gape)
                   * (1 - Math.exp(-dt / (gapeWant > state.gape ? 0.28 : 2.2)));
       state.ascend = Math.max(0, state.ascend - dt / 26);
-      state.flash *= Math.exp(-dt / 0.15);
+      // 1.5 seconds, not 0.15. Combined with the fifth of the amplitude in
+      // main.ts this is a swell across the flank rather than a blink, and a
+      // blink is what "the sudden brightening feels wrong" was about.
+      state.flash *= Math.exp(-dt / 1.5);
 
       fitTo(camera);
       const u = material.uniforms;
@@ -1054,7 +1097,8 @@ export function createWhales(): Whales {
         + state.near * 40);
       u.uBody.value.set(state.y + state.ascend * 9, depth, state.mass, state.flash);
       u.uMotion.value.set(state.cruise, state.gape, state.warm, state.ascend);
-      u.uSwim.value.set(Math.PI * turnEase(), bank, state.stroke, effort);
+      // The shader adds YAW itself, so what goes across is the difference.
+      u.uSwim.value.set(yawNow() - YAW, bank, state.stroke, effort);
     },
 
     setLight(x, y, z, strength) {

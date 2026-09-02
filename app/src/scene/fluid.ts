@@ -73,7 +73,7 @@ export interface Fluid {
   setSwimmer: (
     i: 0 | 1,
     x: number, y: number, radius: number,
-    dx: number, dy: number, spin: number, strength: number,
+    dx: number, dy: number, spin: number, radial: number, strength: number,
   ) => void;
   setExtent: (halfWidth: number, halfHeight: number) => void;
   update: (dt: number, time: number, agitation: number) => void;
@@ -89,7 +89,7 @@ uniform vec2 uSize;
 uniform vec4 uImpulse[${MAX_IMPULSES}];  // xy world position, z strength, w radius
 uniform vec4 uImpulseDir[${MAX_IMPULSES}]; // xy direction, z spin, w radial
 uniform vec4 uSwimmer[2];     // xy world position, z radius, w strength
-uniform vec4 uSwimmerDir[2];  // xy push, z spin, w unused
+uniform vec4 uSwimmerDir[2];  // xy push, z spin, w radial (negative draws in)
 
 /*
  * Simplex-ish value noise. Cheap on purpose: it is only used to keep the field
@@ -226,7 +226,7 @@ void main() {
     vec4 dir = uSwimmerDir[i];
     vec2 radial = d / r;
     vec2 tangent = vec2(-radial.y, radial.x);
-    v += (dir.xy + tangent * dir.z) * sw.w * fall * uDt;
+    v += (dir.xy + tangent * dir.z + radial * dir.w) * sw.w * fall * uDt;
     dye += fall * sw.w * uDt * 0.05;
   }
 
@@ -304,9 +304,9 @@ export function createFluid(renderer: THREE.WebGLRenderer): Fluid {
       active.push(i);
     },
 
-    setSwimmer(i, x, y, radius, dx, dy, spin, strength) {
+    setSwimmer(i, x, y, radius, dx, dy, spin, radial, strength) {
       (uniforms.uSwimmer.value as THREE.Vector4[])[i].set(x, y, radius, strength);
-      (uniforms.uSwimmerDir.value as THREE.Vector4[])[i].set(dx, dy, spin, 0);
+      (uniforms.uSwimmerDir.value as THREE.Vector4[])[i].set(dx, dy, spin, radial);
     },
 
     setExtent(halfWidth, halfHeight) {

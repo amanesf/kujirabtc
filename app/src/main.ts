@@ -160,9 +160,23 @@ function project(worldY: number): number {
  */
 let pendingLeviathan = false;
 
-function lunge(x: number, y: number, side: number, power: number, leviathan: boolean): void {
-  shoal.spawn(x, y, side, power);
-  whales.state.flash = Math.min(1.6, whales.state.flash + 0.6 + power);
+function lunge(power: number, leviathan: boolean): void {
+  /*
+   * No school, and no flash.
+   *
+   * A whale-sized print used to also release a shoal at the price it printed
+   * at — five to eleven fish appearing out of empty water, at the same instant
+   * as a shock ring, and then snatched by the mouth a few seconds later. From
+   * outside it looks exactly like what it is: things being created and
+   * destroyed on a cue. A print that is large enough to be the whale *is* the
+   * whale; the fish belong to the middle of the tape.
+   *
+   * The flank flash is gone the same way (see effects/abyss.ts). What remains
+   * is a slow swell — a fifth of the old amplitude over ten times the
+   * duration — which the eye reads as the body brightening rather than as
+   * something being switched on.
+   */
+  whales.state.flash = Math.min(0.35, whales.state.flash + 0.10 + power * 0.12);
   // The rare tier is the one that brings it up out of the dark (plan §3).
   if (leviathan) whales.state.ascend = 1;
   pendingLeviathan = pendingLeviathan || leviathan;
@@ -235,18 +249,10 @@ whales.setOnEngulf((mouth, power) => {
     span: 7.0,
   });
 
-  // The ring, projected at the body's *actual* depth. At z = -6 it came out
-  // at an NDC x of nearly eight — far off frame, where a front this wide sat
-  // along the border and coloured it (effects/abyss.ts).
-  toNdc(mouth.x, mouth.y, depth, stage.camera, screen);
-  postFx.shocks.push({
-    x: screen.x * 0.5 * stage.aspect(),
-    y: screen.y * 0.5,
-    age: 0,
-    power: (0.5 + power) * (leviathan ? 1.7 : 1),
-  });
-
-  observer.push(water.x, water.y, power * (leviathan ? 3.2 : 1.4));
+  // The observer still flinches, a third of a second late, and it is now the
+  // only fast thing in the event — a body noticing, rather than the frame
+  // being hit.
+  observer.push(water.x, water.y, power * (leviathan ? 1.6 : 0.8));
   // And the school that was in the wrong place at the wrong time.
   shoal.consume(water.x, water.y, radius * 0.75);
 });
@@ -269,7 +275,7 @@ whales.setOnEngulf((mouth, power) => {
 function provoke(): void {
   const ws = whales.state;
   ws.mass = Math.max(ws.mass, 0.45);
-  lunge(ws.cruise, ws.y, ws.warm > 0.5 ? 1 : -1, 0.8, false);
+  lunge(0.8, false);
 }
 
 /**
@@ -288,7 +294,7 @@ function applyImpulses(): void {
     const y = frame.toY(imp.price);
     const x = imp.x * frame.halfWidth;
     if (imp.whale) {
-      lunge(x, y, imp.side, imp.power, imp.leviathan);
+      lunge(imp.power, imp.leviathan);
     } else {
       shoal.spawn(x, y, imp.side, imp.power);
       fluid.add({
@@ -304,7 +310,6 @@ function applyImpulses(): void {
       });
     }
   }
-  if (postFx.shocks.length > 8) postFx.shocks.splice(0, postFx.shocks.length - 8);
 }
 
 /** The slow whole-frame lever (see step()). Starts where a quiet market sits. */
@@ -396,7 +401,7 @@ function step(dt: number): void {
   whales.mouth(mouthWhale);
   toWater(mouthWhale.x, mouthWhale.y, depth, stage.camera, water);
   const gapeR = mouthRadius(0.8);
-  field.setMouth(water.x, water.y, gapeR * 0.8, ws.gape);
+  field.setMouth(water.x, water.y, gapeR * 0.62, ws.gape);
   if (ws.gape > 0.35) shoal.consume(water.x, water.y, gapeR * 0.55 * ws.gape);
   // A steady, gentle avoidance of the body itself — a startle, scaled by the
   // step so it is a rate rather than a kick, and small enough that it never
@@ -441,16 +446,34 @@ function step(dt: number): void {
     // Steady state is roughly six times the push (the water's decay constant),
     // so these are small numbers on purpose: a cruising animal should stir the
     // field, not blow it apart.
-    const bow = (0.22 + ws.effort * 1.05) * (0.4 + ws.mass);
-    fluid.setSwimmer(0, water.x, water.y, reach * 1.15, ux * bow, uy * bow, 0, 1);
+    /*
+     * The head does two opposite jobs, and which one depends on the jaw.
+     *
+     * Shut, it is a bow: it shoulders water aside and the krill part in front
+     * of it. Open, it is an intake — and this is the part that was missing.
+     * The suction was a single impulse fired on the frame the mouth opened,
+     * decaying as the square of its remaining life; by the time the jaw was
+     * actually wide the pull was already fading, so the krill drifted rather
+     * than streamed, and the honest report from watching it was that nothing
+     * looked eaten.
+     *
+     * A standing inward radial for as long as the mouth is open is the whole
+     * of the fix. The water accelerates toward the jaws for the entire second
+     * and a half, the field is drawn into a funnel, and what crosses the rim
+     * of the mouth (scene/field.ts) does not come out the other side.
+     */
+    const bow = (0.22 + ws.effort * 1.05) * (0.4 + ws.mass) * (1 - ws.gape);
+    const draw = -ws.gape * 2.6 * (0.5 + ws.mass);
+    fluid.setSwimmer(0, water.x, water.y, reach * (1.15 + ws.gape * 0.5),
+      ux * bow, uy * bow, ws.gape * 1.6, draw, 1);
 
     const beat = Math.sin(ws.stroke);
     const swat = beat * (0.45 + ws.effort * 2.1) * (0.4 + ws.mass);
     fluid.setSwimmer(1, tailWater.x, tailWater.y, reach * 0.95,
-      -uy * swat, ux * swat, beat * (0.6 + ws.effort * 2.4), 1);
+      -uy * swat, ux * swat, beat * (0.6 + ws.effort * 2.4), 0, 1);
   } else {
-    fluid.setSwimmer(0, 0, 0, 1, 0, 0, 0, 0);
-    fluid.setSwimmer(1, 0, 0, 1, 0, 0, 0, 0);
+    fluid.setSwimmer(0, 0, 0, 1, 0, 0, 0, 0, 0);
+    fluid.setSwimmer(1, 0, 0, 1, 0, 0, 0, 0, 0);
   }
 
   /*
@@ -513,10 +536,6 @@ function step(dt: number): void {
       strength: ws.mass * 0.008 + ws.flash * 0.006 + ws.gape * 0.010,
       radius: 0.26 + ws.mass * 0.34,
     });
-  }
-  for (let i = postFx.shocks.length - 1; i >= 0; i--) {
-    postFx.shocks[i].age += dt;
-    if (postFx.shocks[i].age > 1.0) postFx.shocks.splice(i, 1);
   }
   postFx.setTime(simTime);
 }
