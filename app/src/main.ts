@@ -43,7 +43,7 @@ scene.add(shoal.mesh);
 
 const postFx = createPostFx(stage.renderer, scene, stage.camera, stage.size.x, stage.size.y);
 const ocean = createOcean();
-const hud = createHud(document.querySelector<HTMLElement>('#hud')!);
+const hud = createHud(document.querySelector<HTMLElement>('#hud')!, () => provoke());
 let feedState: FeedState = 'connecting';
 
 const feed = createFeed({
@@ -146,6 +146,65 @@ function project(worldY: number): number {
 }
 
 /**
+ * A whale print, which is a lunge, and the fluid gets a *negative* radial.
+ *
+ * This is the one place the piece departs from "big trade, big explosion", and
+ * it is the better picture in both directions. Biologically a rorqual's lunge
+ * is an inhalation: the krill are drawn into the pouch, not blown clear.
+ * Financially a large aggressive order is a thing that *consumes* the book
+ * rather than one that pushes it away. Both say inward, so the water goes
+ * inward — and a hundred thousand bodies spiralling into a mouth is a sight
+ * the outward version cannot buy.
+ *
+ * The spin is kept, so what is drawn in is drawn in turning.
+ */
+function lunge(x: number, y: number, side: number, power: number, leviathan: boolean): void {
+  const at = whales.lungeAt();
+  shoal.spawn(x, y, side, power);
+  fluid.add({
+    x: at.x, y: at.y,
+    dx: Math.cos(0.58) * 9 * power,
+    dy: 0,
+    radius: 5.0 + power * 7.0,
+    spin: side * 22 * power,
+    radial: -34 * power,
+    strength: 1,
+    life: 7.0,
+    span: 7.0,
+  });
+  postFx.shocks.push({ x: 0, y: 0, age: 0, power: (0.5 + power) * (leviathan ? 1.7 : 1) });
+  const shock = postFx.shocks[postFx.shocks.length - 1];
+  ndc.set(at.x, at.y, -6).project(stage.camera);
+  shock.x = ndc.x * 0.5 * stage.aspect();
+  shock.y = ndc.y * 0.5;
+  observer.push(at.x, at.y, power * (leviathan ? 3.2 : 1.4));
+  whales.state.flash = Math.min(1.6, whales.state.flash + 0.6 + power);
+  // The rare tier is the one that brings it up out of the dark (plan §3).
+  if (leviathan) whales.state.ascend = 1;
+}
+
+/*
+ * The button under the whale in the legend (ui/hud.ts).
+ *
+ * A lunge is the only thing in this ocean that the market might simply decline
+ * to do for minutes at a time, and it is where nearly everything the animal
+ * can do is concentrated — the stroke deepens, the throat unfolds, the body
+ * accelerates eightfold, the water turns inward. Waiting on a big print to see
+ * any of that is the reason the animal reads as inert.
+ *
+ * The floor under mass is what makes the button honest rather than merely
+ * present: below 0.03 the body is not drawn at all, so on a thin book the
+ * lunge would happen to something invisible. It is a floor and not an
+ * assignment — step() goes on easing mass toward whatever the book actually
+ * says, and within a few seconds the animal is telling the truth again.
+ */
+function provoke(): void {
+  const ws = whales.state;
+  ws.mass = Math.max(ws.mass, 0.45);
+  lunge(ws.cruise, ws.y, ws.warm > 0.5 ? 1 : -1, 0.8, false);
+}
+
+/**
  * The impulse mapping: one print, one push.
  *
  * A fish gets a jet — a directed shove that opens a corridor. A whale gets a
@@ -161,41 +220,7 @@ function applyImpulses(): void {
     const y = frame.toY(imp.price);
     const x = imp.x * frame.halfWidth;
     if (imp.whale) {
-      /*
-       * A whale print is a lunge, and the fluid gets a *negative* radial for it.
-       *
-       * This is the one place the piece departs from "big trade, big explosion",
-       * and it is the better picture in both directions. Biologically a
-       * rorqual's lunge is an inhalation: the krill are drawn into the pouch,
-       * not blown clear. Financially a large aggressive order is a thing that
-       * *consumes* the book rather than one that pushes it away. Both say
-       * inward, so the water goes inward — and a hundred thousand bodies
-       * spiralling into a mouth is a sight the outward version cannot buy.
-       *
-       * The spin is kept, so what is drawn in is drawn in turning.
-       */
-      const at = whales.lungeAt();
-      shoal.spawn(x, y, imp.side, imp.power);
-      fluid.add({
-        x: at.x, y: at.y,
-        dx: Math.cos(0.58) * 9 * imp.power,
-        dy: 0,
-        radius: 5.0 + imp.power * 7.0,
-        spin: imp.side * 22 * imp.power,
-        radial: -34 * imp.power,
-        strength: 1,
-        life: 7.0,
-        span: 7.0,
-      });
-      postFx.shocks.push({ x: 0, y: 0, age: 0, power: (0.5 + imp.power) * (imp.leviathan ? 1.7 : 1) });
-      const shock = postFx.shocks[postFx.shocks.length - 1];
-      ndc.set(at.x, at.y, -6).project(stage.camera);
-      shock.x = ndc.x * 0.5 * stage.aspect();
-      shock.y = ndc.y * 0.5;
-      observer.push(at.x, at.y, imp.power * (imp.leviathan ? 3.2 : 1.4));
-      whales.state.flash = Math.min(1.6, whales.state.flash + 0.6 + imp.power);
-      // The rare tier is the one that brings it up out of the dark (plan §3).
-      if (imp.leviathan) whales.state.ascend = 1;
+      lunge(x, y, imp.side, imp.power, imp.leviathan);
     } else {
       shoal.spawn(x, y, imp.side, imp.power);
       fluid.add({

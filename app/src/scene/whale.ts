@@ -523,8 +523,19 @@ export function createWhales(): Whales {
     lungeAt() {
       state.lunge = 1;
       const L = 15 + state.mass * 15;
-      // The mouth is at the front of the animal, along its own heading.
-      mouth.set(state.cruise + Math.cos(YAW) * L * 0.95 * heading(), state.y - 1.5, 0);
+      /*
+       * The mouth is at the front of the animal, and the front is wherever the
+       * body is presently pointed — cos(YAW + swing), not cos(YAW) scaled by
+       * the forward speed. The two agree at each end of the track and disagree
+       * completely in the middle of a turn, where the old form put the mouth at
+       * the body's centre: a lunge landing there drew its vortex out of the
+       * animal's flank rather than out of its jaws.
+       */
+      mouth.set(
+        state.cruise + Math.cos(YAW + Math.PI * turnEase()) * L * 0.95,
+        state.y - 1.5,
+        0,
+      );
       return mouth;
     },
 
@@ -565,14 +576,51 @@ export function createWhales(): Whales {
       if (state.cruise > range) state.turnTarget = 1;
       else if (state.cruise < -range) state.turnTarget = 0;
 
+      /*
+       * Twenty-six seconds, not nine, and the reason is the body's length.
+       *
+       * A nine-second reversal looked like a lurch, and it was one: the centre
+       * is what follows the track, so the animal was *pivoting about its own
+       * middle*, and the ends of a body fifty units long swung through a half
+       * circle in those nine seconds. The head therefore crossed some sixty
+       * units of water while the centre crossed none — seven or eight times
+       * cruise speed — which is exactly the "it speeds up for a moment". The
+       * spin was the whole of the turn, and no amount of easing hides a tip
+       * speed that is an order of magnitude out.
+       *
+       * A turn is instead a radius, and an animal of this size has a large
+       * one: something like half its own length, which at this speed is most
+       * of half a minute. Slowing it is what puts the tip speed back within
+       * sight of the cruise speed; nothing else does.
+       */
       const before = turnEase();
-      const rate = dt / 9;
+      const rate = dt / 26;
       state.turn = state.turnTarget === 1
         ? Math.min(1, state.turn + rate)
         : Math.max(0, state.turn - rate);
       // Bank into it, proportional to how fast the heading is presently swinging.
       const swing = dt > 0 ? (turnEase() - before) / dt : 0;
       const bank = swing * 2.6;
+
+      /*
+       * The other half of the turn: the part that goes sideways.
+       *
+       * Only the *sign* of the velocity was being turned, which is a body that
+       * reverses along one line — it has to end the turn where it started it,
+       * and a path that closes on itself like that is a pendulum rather than
+       * an animal. A body holding its speed through a half circle comes out of
+       * it displaced by two radii at right angles to the track, so the two legs
+       * run in different lanes and the turn is a swing rather than a spin.
+       *
+       * The lane is a function of the turn's own progress, not an integral of
+       * it: (1 - cos) is exactly the perpendicular displacement of that semi-
+       * circle, and taking it directly means the animal cannot accumulate a
+       * drift over an hour of turns the way a summed velocity would. Sideways
+       * here means *into the depth*, because the yaw is in the horizontal
+       * plane — so the far leg is a little further off, a little dimmer, and
+       * the water in between reads as water.
+       */
+      const lane = 0.5 - 0.5 * Math.cos(Math.PI * turnEase());
 
       const speed = 0.85 + state.mass * 0.4 + state.lunge * 8.0;
       state.cruise += speed * heading() * dt;
@@ -613,7 +661,7 @@ export function createWhales(): Whales {
       // about a hundred and thirty units — far enough that the veil took nearly
       // all of it and the animal was, for minutes at a time, simply not there.
       // Closer, and over a shorter range: still unreachable, but present.
-      depth = -64 - state.distance * 34 + state.mass * 12 + state.ascend * 20;
+      depth = -64 - state.distance * 34 + state.mass * 12 + state.ascend * 20 - lane * 8;
       u.uBody.value.set(state.y + state.ascend * 9, depth, state.mass, state.flash);
       u.uMotion.value.set(state.cruise, state.gape, state.warm, state.ascend);
       u.uSwim.value.set(Math.PI * turnEase(), bank, state.stroke, effort);

@@ -51,7 +51,7 @@ function coin(size: number): string {
   return size.toFixed(3);
 }
 
-export function createHud(root: HTMLElement): Hud {
+export function createHud(root: HTMLElement, onProvoke: () => void): Hud {
   root.innerHTML = `
     <div class="hud">
       <header class="hud-top">
@@ -95,23 +95,18 @@ export function createHud(root: HTMLElement): Hud {
         <div class="stats">
           <span class="stat"><b class="rate">0.0</b> 約定/秒</span>
           <span class="stat"><b class="spread">—</b> スプレッド</span>
-          <button class="legend-toggle" type="button" aria-expanded="true" aria-label="凡例">
-            <span class="caret" aria-hidden="true"></span>
-          </button>
         </div>
         <ul class="tape"></ul>
-      </footer>
 
-      <div class="legend" data-open="1">
-        <p class="legend-title">この海の読み方</p>
-        <ul>
-          <li><i class="sw sw-krill"></i>オキアミ<em>&lt; ${KRILL_MAX} BTC</em><span>水そのもの。流れが強いところだけ光る</span></li>
-          <li><i class="sw sw-fish"></i>魚<em>${KRILL_MAX} – <b class="w-line">2.0</b> BTC</em><span>横切る。残していく航跡が本体</span></li>
-          <li><i class="sw sw-whale"></i>クジラ<em>&gt; <b class="w-line">2.0</b> BTC</em><span>深部の巨体。指値の厚みそのもの</span></li>
-        </ul>
-        <p class="legend-axis">縦軸は<b>価格</b>。買いが強ければ海が沈む。</p>
-        <p class="legend-hint">水に触れると散る</p>
-      </div>
+        <div class="legend">
+          <span class="legend-unit">BTC</span>
+          <span class="legend-item"><i class="sw sw-krill"></i>オキアミ<em>&lt; ${KRILL_MAX}</em></span>
+          <span class="legend-item"><i class="sw sw-fish"></i>魚<em>${KRILL_MAX}–<b class="w-line">2.0</b></em></span>
+          <span class="legend-item"><i class="sw sw-whale"></i>クジラ<em>&gt; <b class="w-line">2.0</b></em>
+            <button class="provoke" type="button" aria-label="クジラを突進させる">突進</button>
+          </span>
+        </div>
+      </footer>
     </div>
   `;
 
@@ -124,7 +119,6 @@ export function createHud(root: HTMLElement): Hud {
   const rate = q<HTMLElement>('.rate');
   const spread = q<HTMLElement>('.spread');
   const tape = q<HTMLUListElement>('.tape');
-  const legend = q<HTMLElement>('.legend');
   const whaleLines = Array.from(root.querySelectorAll<HTMLElement>('.w-line'));
 
   const specimens = {
@@ -141,27 +135,22 @@ export function createHud(root: HTMLElement): Hud {
   };
 
   /*
-   * The legend is not optional furniture. A mapping only the author knows is
-   * not legibility, and the point is that a viewer should be able to *learn* to
-   * read the water. It shows for twenty seconds — about how long it takes to
-   * read — and then gets out of the way.
+   * The legend, as a strip rather than as a panel.
    *
-   * It used to be dismissed by tapping anywhere, which was the wrong thing to
-   * spend the gesture on: the whole surface of a piece about water should
-   * answer to a finger, and a caret is a fifth of a second of anyone's day. So
-   * the panel has its own control and the screen is left free for the water
-   * (main.ts).
+   * It was a card that covered a fifth of the ocean for its first twenty
+   * seconds and then had to be dismissed, which put the piece's own
+   * explanation in front of the piece at the one moment a viewer is deciding
+   * whether to keep watching. As a single line along the bottom edge it is
+   * always there and never in the way, and the three animals sit in size
+   * order, left to right, which is the mapping the whole picture is built on.
+   *
+   * The button is the whale's, and it is deliberately the only control here: a
+   * lunge is the one thing in this ocean the market might not do for minutes
+   * at a stretch, and both the animal's fastest motion and the water's
+   * strongest response hang off it. Being able to ask for it is the difference
+   * between watching the piece and being able to see whether it works.
    */
-  const toggle = q<HTMLButtonElement>('.legend-toggle');
-  function setLegend(open: boolean): void {
-    legend.setAttribute('data-open', open ? '1' : '0');
-    toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
-  }
-  const legendTimer = window.setTimeout(() => setLegend(false), 20000);
-  toggle.addEventListener('click', () => {
-    window.clearTimeout(legendTimer);
-    setLegend(legend.getAttribute('data-open') !== '1');
-  });
+  q<HTMLButtonElement>('.provoke').addEventListener('click', () => onProvoke());
 
   const feedText: Record<FeedState, string> = {
     connecting: '接続中',
